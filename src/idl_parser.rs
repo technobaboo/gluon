@@ -5,6 +5,26 @@ use std::collections::HashMap;
 pub struct Protocol {
     name: String,
     interfaces: HashMap<String, Interface>,
+    structs: HashMap<String, StructDef>,
+    enums: HashMap<String, EnumDef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumDef {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
@@ -34,7 +54,8 @@ pub enum Type {
     F64,
     String,
     Fd,
-    Object(Option<String>), // optional interface name
+    Ref(Option<String>),    // binder object reference
+    Named(String),          // reference to a struct or enum by name
     Array(Box<Type>, u32),
     Vec(Box<Type>),
     Set(Box<Type>),
@@ -42,10 +63,6 @@ pub enum Type {
 }
 
 pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<'src, char>>> {
-    let interface_name = text::ident()
-        .map(str::to_string)
-        .padded()
-        .labelled("interface");
     let method_name = text::ident().map(str::to_string).labelled("method");
     let type_parser = recursive(|p| {
         choice((
@@ -84,8 +101,14 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                 .then(text::int(10).map(|s: &str| s.parse::<u32>().unwrap()))
                 .map(|(t, n): (Type, u32)| Type::Array(Box::new(t), n))
                 .delimited_by(just('['), just(']')),
-            just("Object").to(Type::Object(None)),
-            text::ident().map(|s: &str| Type::Object(Some(s.to_string()))),
+            just("Ref").then(
+                text::ident()
+                    .map(|s: &str| Some(s.to_string()))
+                    .delimited_by(just('<').padded(), just('>').padded())
+                    .or_not()
+                    .map(|opt| opt.flatten()),
+            ).map(|(_, name)| Type::Ref(name)),
+            text::ident().map(|s: &str| Type::Named(s.to_string())),
         ))
         .padded()
         .labelled("type")
@@ -103,7 +126,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
     let returns = just("->").padded().ignore_then(params.clone()).or_not();
     let comment = just("//").then(none_of("\n\r").repeated()).or_not();
     let method = method_name
-        .then(params)
+        .then(params.clone())
         .then(returns)
         .map(|((name, params), returns)| Method {
             name,
@@ -119,17 +142,81 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
     let interface_inner = methods.delimited_by(just('{'), just('}')).padded();
     let interface = keyword("interface")
         .padded()
-        .ignore_then(interface_name)
+        .ignore_then(text::ident().map(str::to_string).padded())
         .then(interface_inner);
 
-    interface
+    // Struct field: `name: Type` with optional trailing comma
+    let struct_field = text::ident()
+        .map(str::to_string)
+        .padded()
+        .then_ignore(just(':').padded())
+        .then(type_parser.clone());
+    let struct_fields = struct_field
+        .separated_by(just(',').padded())
+        .allow_trailing()
+        .collect::<Vec<(String, Type)>>();
+    let struct_def = keyword("struct")
+        .padded()
+        .ignore_then(text::ident().map(str::to_string).padded())
+        .then(struct_fields.clone().delimited_by(just('{').padded(), just('}').padded()))
+        .map(|(name, fields)| StructDef { name, fields });
+
+    // Enum variant: `Name` or `Name { fields }`
+    let variant_fields = struct_fields
+        .delimited_by(just('{').padded(), just('}').padded());
+    let enum_variant = text::ident()
+        .map(str::to_string)
+        .padded()
+        .then(variant_fields.or_not())
+        .map(|(name, fields)| EnumVariant {
+            name,
+            fields: fields.unwrap_or_default(),
+        });
+    let enum_variants = enum_variant
+        .separated_by(just(',').padded())
+        .allow_trailing()
+        .collect::<Vec<EnumVariant>>();
+    let enum_def = keyword("enum")
+        .padded()
+        .ignore_then(text::ident().map(str::to_string).padded())
+        .then(enum_variants.delimited_by(just('{').padded(), just('}').padded()))
+        .map(|(name, variants)| EnumDef { name, variants });
+
+    // Top-level items
+    enum TopLevel {
+        Interface(String, Interface),
+        Struct(StructDef),
+        Enum(EnumDef),
+    }
+
+    let top_level_item = choice((
+        interface.map(|(name, iface)| TopLevel::Interface(name, iface)),
+        struct_def.map(TopLevel::Struct),
+        enum_def.map(TopLevel::Enum),
+    ));
+
+    top_level_item
         .padded()
         .repeated()
-        .collect::<HashMap<String, Interface>>()
+        .collect::<Vec<TopLevel>>()
         .then_ignore(end())
-        .map(|interfaces| Protocol {
-            name: "".to_string(),
-            interfaces,
+        .map(|items| {
+            let mut interfaces = HashMap::new();
+            let mut structs = HashMap::new();
+            let mut enums = HashMap::new();
+            for item in items {
+                match item {
+                    TopLevel::Interface(name, iface) => { interfaces.insert(name, iface); }
+                    TopLevel::Struct(s) => { structs.insert(s.name.clone(), s); }
+                    TopLevel::Enum(e) => { enums.insert(e.name.clone(), e); }
+                }
+            }
+            Protocol {
+                name: "".to_string(),
+                interfaces,
+                structs,
+                enums,
+            }
         })
 }
 
@@ -175,6 +262,8 @@ fn test_parse_idl() {
                     ],
                 }
             ),]),
+            structs: HashMap::new(),
+            enums: HashMap::new(),
         }
     );
 }
@@ -285,39 +374,157 @@ fn test_parse_types() {
 }
 
 #[test]
-fn test_parse_object_types() {
+fn test_parse_ref_types() {
     let input = r#"
-        interface ObjectTest {
-            get_any() -> (obj: Object)
-            get_display(name: String) -> (display: Display)
-            bind(obj: Object, iface: Compositor) -> (bound: Object)
+        interface RefTest {
+            get_any() -> (obj: Ref)
+            get_display(name: String) -> (display: Ref<Display>)
+            bind(obj: Ref, iface: Ref<Compositor>) -> (bound: Ref)
         }
     "#;
-    let protocol = parse_idl("ObjectTest", input).unwrap();
-    let iface = &protocol.interfaces["ObjectTest"];
+    let protocol = parse_idl("RefTest", input).unwrap();
+    let iface = &protocol.interfaces["RefTest"];
 
-    // get_any: -> Object (untyped)
+    // get_any: -> Ref (untyped)
     assert_eq!(
         iface.methods[0].returns,
-        Some(vec![("obj".into(), Type::Object(None))])
+        Some(vec![("obj".into(), Type::Ref(None))])
     );
 
-    // get_display: String -> Display (named object)
+    // get_display: String -> Ref<Display> (typed)
     assert_eq!(
         iface.methods[1].returns,
-        Some(vec![("display".into(), Type::Object(Some("Display".into())))])
+        Some(vec![("display".into(), Type::Ref(Some("Display".into())))])
     );
 
-    // bind: Object, Compositor -> Object
+    // bind: Ref, Ref<Compositor> -> Ref
     assert_eq!(
         iface.methods[2].params,
         vec![
-            ("obj".into(), Type::Object(None)),
-            ("iface".into(), Type::Object(Some("Compositor".into()))),
+            ("obj".into(), Type::Ref(None)),
+            ("iface".into(), Type::Ref(Some("Compositor".into()))),
         ]
     );
     assert_eq!(
         iface.methods[2].returns,
-        Some(vec![("bound".into(), Type::Object(None))])
+        Some(vec![("bound".into(), Type::Ref(None))])
     );
+}
+
+#[test]
+fn test_parse_struct() {
+    let input = r#"
+        struct Vec3 {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    let s = &protocol.structs["Vec3"];
+    assert_eq!(s.name, "Vec3");
+    assert_eq!(
+        s.fields,
+        vec![
+            ("x".into(), Type::F32),
+            ("y".into(), Type::F32),
+            ("z".into(), Type::F32),
+        ]
+    );
+}
+
+#[test]
+fn test_parse_enum() {
+    let input = r#"
+        enum Interaction {
+            Pointer {
+                origin: f32,
+                direction: f32,
+            },
+            Hand {
+                joints: u32,
+            },
+            Touch {
+                point: f32,
+            },
+            None,
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    let e = &protocol.enums["Interaction"];
+    assert_eq!(e.name, "Interaction");
+    assert_eq!(e.variants.len(), 4);
+
+    assert_eq!(e.variants[0].name, "Pointer");
+    assert_eq!(
+        e.variants[0].fields,
+        vec![("origin".into(), Type::F32), ("direction".into(), Type::F32)]
+    );
+
+    assert_eq!(e.variants[1].name, "Hand");
+    assert_eq!(e.variants[1].fields, vec![("joints".into(), Type::U32)]);
+
+    assert_eq!(e.variants[2].name, "Touch");
+    assert_eq!(e.variants[2].fields, vec![("point".into(), Type::F32)]);
+
+    // Unit variant
+    assert_eq!(e.variants[3].name, "None");
+    assert!(e.variants[3].fields.is_empty());
+}
+
+#[test]
+fn test_parse_mixed() {
+    let input = r#"
+        struct Vec3 {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
+
+        enum HitResult {
+            Miss,
+            Surface {
+                point: Vec3,
+                normal: Vec3,
+                distance: f32,
+            },
+        }
+
+        interface Spatial {
+            set_position(position: Vec3)
+            interact(ray_origin: Vec3, ray_dir: Vec3) -> (hit: HitResult)
+            get_child(name: String) -> (child: Ref<Spatial>)
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+
+    assert!(protocol.structs.contains_key("Vec3"));
+    assert!(protocol.enums.contains_key("HitResult"));
+    assert!(protocol.interfaces.contains_key("Spatial"));
+
+    let iface = &protocol.interfaces["Spatial"];
+    assert_eq!(iface.methods.len(), 3);
+
+    // set_position uses Named("Vec3")
+    assert_eq!(
+        iface.methods[0].params,
+        vec![("position".into(), Type::Named("Vec3".into()))]
+    );
+
+    // interact returns Named("HitResult")
+    assert_eq!(
+        iface.methods[1].returns,
+        Some(vec![("hit".into(), Type::Named("HitResult".into()))])
+    );
+
+    // get_child returns Ref<Spatial>
+    assert_eq!(
+        iface.methods[2].returns,
+        Some(vec![("child".into(), Type::Ref(Some("Spatial".into())))])
+    );
+
+    // Struct fields referencing other structs via Named
+    let hit = &protocol.enums["HitResult"];
+    assert_eq!(hit.variants[1].fields[0], ("point".into(), Type::Named("Vec3".into())));
+    assert_eq!(hit.variants[1].fields[1], ("normal".into(), Type::Named("Vec3".into())));
 }
