@@ -208,7 +208,6 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
 
     // --- Struct ---
     let struct_field = opt_doc_block
-        .clone()
         .then(
             text::ident()
                 .map(str::to_string)
@@ -222,7 +221,6 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         .allow_trailing()
         .collect::<Vec<Field>>();
     let struct_def = req_doc_block
-        .clone()
         .then(
             one_of(" \t")
                 .repeated()
@@ -240,7 +238,6 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
     // --- Enum ---
     let variant_fields = struct_fields.delimited_by(just('{').padded(), just('}').padded());
     let enum_variant = opt_doc_block
-        .clone()
         .then(
             text::ident()
                 .map(str::to_string)
@@ -257,7 +254,6 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         .allow_trailing()
         .collect::<Vec<EnumVariant>>();
     let enum_def = req_doc_block
-        .clone()
         .then(
             one_of(" \t")
                 .repeated()
@@ -322,22 +318,6 @@ pub fn parse_idl<'src>(name: &str, input: &'src str) -> Result<Protocol, Vec<Ric
     Ok(protocol)
 }
 
-fn f(name: &str, ty: Type) -> Field {
-    Field {
-        name: name.to_string(),
-        ty,
-        doc: None,
-    }
-}
-
-fn fd(name: &str, ty: Type, doc: &str) -> Field {
-    Field {
-        name: name.to_string(),
-        ty,
-        doc: Some(doc.to_string()),
-    }
-}
-
 #[test]
 fn test_parse_idl() {
     let input = r#"
@@ -370,8 +350,16 @@ fn test_parse_idl() {
                         },
                         Method {
                             name: "echo".to_string(),
-                            params: vec![f("input", Type::String)],
-                            returns: Some(vec![f("output", Type::String)]),
+                            params: vec![Field {
+                                name: "input".to_string(),
+                                ty: Type::String,
+                                doc: None
+                            }],
+                            returns: Some(vec![Field {
+                                name: "output".to_string(),
+                                ty: Type::String,
+                                doc: None
+                            }]),
                         },
                     ],
                 }
@@ -404,71 +392,166 @@ fn test_parse_types() {
     assert_eq!(
         iface.methods[0].params,
         vec![
-            f("data", Type::Vec(Box::new(Type::U8))),
-            f("name", Type::String),
-            f("executable", Type::Bool),
+            Field {
+                name: "data".to_string(),
+                ty: Type::Vec(Box::new(Type::U8)),
+                doc: None
+            },
+            Field {
+                name: "name".to_string(),
+                ty: Type::String,
+                doc: None
+            },
+            Field {
+                name: "executable".to_string(),
+                ty: Type::Bool,
+                doc: None
+            },
         ]
     );
-    assert_eq!(iface.methods[0].returns, Some(vec![f("handle", Type::Fd)]));
+    assert_eq!(
+        iface.methods[0].returns,
+        Some(vec![Field {
+            name: "handle".to_string(),
+            ty: Type::Fd,
+            doc: None
+        }])
+    );
 
     assert_eq!(
         iface.methods[1].params,
         vec![
-            f("handle", Type::Fd),
-            f("offset", Type::U64),
-            f("length", Type::U32),
+            Field {
+                name: "handle".to_string(),
+                ty: Type::Fd,
+                doc: None
+            },
+            Field {
+                name: "offset".to_string(),
+                ty: Type::U64,
+                doc: None
+            },
+            Field {
+                name: "length".to_string(),
+                ty: Type::U32,
+                doc: None
+            },
         ]
     );
     assert_eq!(
         iface.methods[1].returns,
         Some(vec![
-            f("data", Type::Vec(Box::new(Type::U8))),
-            f("bytes_read", Type::U32),
+            Field {
+                name: "data".to_string(),
+                ty: Type::Vec(Box::new(Type::U8)),
+                doc: None
+            },
+            Field {
+                name: "bytes_read".to_string(),
+                ty: Type::U32,
+                doc: None
+            },
         ])
     );
 
     assert_eq!(
         iface.methods[2].returns,
-        Some(vec![f("sha256", Type::Array(Box::new(Type::U8), 32))])
+        Some(vec![Field {
+            name: "sha256".to_string(),
+            ty: Type::Array(Box::new(Type::U8), 32),
+            doc: None
+        }])
     );
 
     assert_eq!(
         iface.methods[3].returns,
         Some(vec![
-            f("size", Type::U64),
-            f("mode", Type::U16),
-            f("uid", Type::U32),
-            f("gid", Type::U32),
+            Field {
+                name: "size".to_string(),
+                ty: Type::U64,
+                doc: None
+            },
+            Field {
+                name: "mode".to_string(),
+                ty: Type::U16,
+                doc: None
+            },
+            Field {
+                name: "uid".to_string(),
+                ty: Type::U32,
+                doc: None
+            },
+            Field {
+                name: "gid".to_string(),
+                ty: Type::U32,
+                doc: None
+            },
         ])
     );
 
     assert_eq!(
         iface.methods[4].params[1],
-        f("tags", Type::Set(Box::new(Type::String)))
+        Field {
+            name: "tags".to_string(),
+            ty: Type::Set(Box::new(Type::String)),
+            doc: None
+        }
     );
     assert_eq!(iface.methods[4].returns, Some(vec![]));
 
     assert_eq!(
         iface.methods[5].returns,
-        Some(vec![f(
-            "metadata",
-            Type::Map(Box::new(Type::String), Box::new(Type::String))
-        )])
+        Some(vec![Field {
+            name: "metadata".to_string(),
+            ty: Type::Map(Box::new(Type::String), Box::new(Type::String)),
+            doc: None,
+        }])
     );
 
     assert_eq!(
         iface.methods[6].returns,
-        Some(vec![f("temperature", Type::F32), f("pressure", Type::F64)])
+        Some(vec![
+            Field {
+                name: "temperature".to_string(),
+                ty: Type::F32,
+                doc: None
+            },
+            Field {
+                name: "pressure".to_string(),
+                ty: Type::F64,
+                doc: None
+            },
+        ])
     );
 
     assert_eq!(
         iface.methods[7].params,
         vec![
-            f("handle", Type::Fd),
-            f("delta_x", Type::I8),
-            f("delta_y", Type::I16),
-            f("delta_z", Type::I32),
-            f("delta_w", Type::I64),
+            Field {
+                name: "handle".to_string(),
+                ty: Type::Fd,
+                doc: None
+            },
+            Field {
+                name: "delta_x".to_string(),
+                ty: Type::I8,
+                doc: None
+            },
+            Field {
+                name: "delta_y".to_string(),
+                ty: Type::I16,
+                doc: None
+            },
+            Field {
+                name: "delta_z".to_string(),
+                ty: Type::I32,
+                doc: None
+            },
+            Field {
+                name: "delta_w".to_string(),
+                ty: Type::I64,
+                doc: None
+            },
         ]
     );
     assert_eq!(iface.methods[7].returns, Some(vec![]));
@@ -489,22 +572,42 @@ fn test_parse_ref_types() {
 
     assert_eq!(
         iface.methods[0].returns,
-        Some(vec![f("obj", Type::Ref(None))])
+        Some(vec![Field {
+            name: "obj".to_string(),
+            ty: Type::Ref(None),
+            doc: None
+        }])
     );
     assert_eq!(
         iface.methods[1].returns,
-        Some(vec![f("display", Type::Ref(Some("Display".into())))])
+        Some(vec![Field {
+            name: "display".to_string(),
+            ty: Type::Ref(Some("Display".into())),
+            doc: None
+        }])
     );
     assert_eq!(
         iface.methods[2].params,
         vec![
-            f("obj", Type::Ref(None)),
-            f("iface", Type::Ref(Some("Compositor".into())))
+            Field {
+                name: "obj".to_string(),
+                ty: Type::Ref(None),
+                doc: None
+            },
+            Field {
+                name: "iface".to_string(),
+                ty: Type::Ref(Some("Compositor".into())),
+                doc: None
+            },
         ]
     );
     assert_eq!(
         iface.methods[2].returns,
-        Some(vec![f("bound", Type::Ref(None))])
+        Some(vec![Field {
+            name: "bound".to_string(),
+            ty: Type::Ref(None),
+            doc: None
+        }])
     );
 }
 
@@ -524,7 +627,23 @@ fn test_parse_struct() {
     assert_eq!(s.doc, "A 3D vector");
     assert_eq!(
         s.fields,
-        vec![f("x", Type::F32), f("y", Type::F32), f("z", Type::F32)]
+        vec![
+            Field {
+                name: "x".to_string(),
+                ty: Type::F32,
+                doc: None
+            },
+            Field {
+                name: "y".to_string(),
+                ty: Type::F32,
+                doc: None
+            },
+            Field {
+                name: "z".to_string(),
+                ty: Type::F32,
+                doc: None
+            },
+        ]
     );
 }
 
@@ -555,12 +674,37 @@ fn test_parse_enum() {
     assert_eq!(e.variants[0].name, "Pointer");
     assert_eq!(
         e.variants[0].fields,
-        vec![f("origin", Type::F32), f("direction", Type::F32)]
+        vec![
+            Field {
+                name: "origin".to_string(),
+                ty: Type::F32,
+                doc: None
+            },
+            Field {
+                name: "direction".to_string(),
+                ty: Type::F32,
+                doc: None
+            },
+        ]
     );
     assert_eq!(e.variants[1].name, "Hand");
-    assert_eq!(e.variants[1].fields, vec![f("joints", Type::U32)]);
+    assert_eq!(
+        e.variants[1].fields,
+        vec![Field {
+            name: "joints".to_string(),
+            ty: Type::U32,
+            doc: None
+        }]
+    );
     assert_eq!(e.variants[2].name, "Touch");
-    assert_eq!(e.variants[2].fields, vec![f("point", Type::F32)]);
+    assert_eq!(
+        e.variants[2].fields,
+        vec![Field {
+            name: "point".to_string(),
+            ty: Type::F32,
+            doc: None
+        }]
+    );
     assert_eq!(e.variants[3].name, "None");
     assert!(e.variants[3].fields.is_empty());
 }
@@ -602,25 +746,45 @@ fn test_parse_mixed() {
     assert_eq!(iface.methods.len(), 3);
     assert_eq!(
         iface.methods[0].params,
-        vec![f("position", Type::Named("Vec3".into()))]
+        vec![Field {
+            name: "position".to_string(),
+            ty: Type::Named("Vec3".into()),
+            doc: None
+        }]
     );
     assert_eq!(
         iface.methods[1].returns,
-        Some(vec![f("hit", Type::Named("HitResult".into()))])
+        Some(vec![Field {
+            name: "hit".to_string(),
+            ty: Type::Named("HitResult".into()),
+            doc: None
+        }])
     );
     assert_eq!(
         iface.methods[2].returns,
-        Some(vec![f("child", Type::Ref(Some("Spatial".into())))])
+        Some(vec![Field {
+            name: "child".to_string(),
+            ty: Type::Ref(Some("Spatial".into())),
+            doc: None
+        }])
     );
 
     let hit = &protocol.enums["HitResult"];
     assert_eq!(
         hit.variants[1].fields[0],
-        f("point", Type::Named("Vec3".into()))
+        Field {
+            name: "point".to_string(),
+            ty: Type::Named("Vec3".into()),
+            doc: None
+        }
     );
     assert_eq!(
         hit.variants[1].fields[1],
-        f("normal", Type::Named("Vec3".into()))
+        Field {
+            name: "normal".to_string(),
+            ty: Type::Named("Vec3".into()),
+            doc: None
+        }
     );
 }
 
@@ -698,10 +862,38 @@ fn test_field_and_variant_docs() {
     let protocol = parse_idl("Test", input).unwrap();
 
     let s = &protocol.structs["Color"];
-    assert_eq!(s.fields[0], fd("r", Type::F32, "Red channel"));
-    assert_eq!(s.fields[1], fd("g", Type::F32, "Green channel"));
-    assert_eq!(s.fields[2], fd("b", Type::F32, "Blue channel"));
-    assert_eq!(s.fields[3], f("a", Type::F32)); // no doc
+    assert_eq!(
+        s.fields[0],
+        Field {
+            name: "r".to_string(),
+            ty: Type::F32,
+            doc: Some("Red channel".to_string())
+        }
+    );
+    assert_eq!(
+        s.fields[1],
+        Field {
+            name: "g".to_string(),
+            ty: Type::F32,
+            doc: Some("Green channel".to_string())
+        }
+    );
+    assert_eq!(
+        s.fields[2],
+        Field {
+            name: "b".to_string(),
+            ty: Type::F32,
+            doc: Some("Blue channel".to_string())
+        }
+    );
+    assert_eq!(
+        s.fields[3],
+        Field {
+            name: "a".to_string(),
+            ty: Type::F32,
+            doc: None
+        }
+    ); // no doc
 
     let e = &protocol.enums["Paint"];
     assert_eq!(e.variants[0].name, "None");
@@ -710,13 +902,21 @@ fn test_field_and_variant_docs() {
     assert_eq!(e.variants[1].doc, Some("Solid color fill".to_string()));
     assert_eq!(
         e.variants[1].fields[0],
-        fd("color", Type::Named("Color".into()), "The fill color")
+        Field {
+            name: "color".to_string(),
+            ty: Type::Named("Color".into()),
+            doc: Some("The fill color".to_string())
+        }
     );
     assert_eq!(e.variants[2].name, "Gradient");
     assert_eq!(e.variants[2].doc, None); // no doc
     assert_eq!(
         e.variants[2].fields[0],
-        f("start", Type::Named("Color".into()))
+        Field {
+            name: "start".to_string(),
+            ty: Type::Named("Color".into()),
+            doc: None
+        }
     );
 }
 
