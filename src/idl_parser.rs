@@ -13,6 +13,7 @@ pub struct Protocol {
 pub struct Field {
     pub name: String,
     pub ty: Type,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +33,7 @@ pub struct EnumDef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumVariant {
     pub name: String,
+    pub doc: Option<String>,
     pub fields: Vec<Field>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,11 +92,24 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
 
     // Required doc block: one or more `///` lines, joined by newline
     let req_doc_block = doc_line
+        .clone()
         .repeated()
         .at_least(1)
         .collect::<Vec<std::string::String>>()
         .map(|lines| lines.join("\n"))
         .labelled("doc comment (/// ...)");
+
+    // Optional doc block: zero or more `///` lines
+    let opt_doc_block = doc_line
+        .repeated()
+        .collect::<Vec<std::string::String>>()
+        .map(|lines| {
+            if lines.is_empty() {
+                None
+            } else {
+                Some(lines.join("\n"))
+            }
+        });
 
     // Regular comment: `//` NOT followed by `/`
     let comment = just("//")
@@ -164,7 +179,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         .map(str::to_string)
         .then_ignore(just(':').padded())
         .then(type_parser.clone())
-        .map(|(name, ty)| Field { name, ty });
+        .map(|(name, ty)| Field { name, ty, doc: None });
     let params = param
         .padded()
         .separated_by(just(','))
@@ -202,12 +217,16 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         .map(|(doc, (name, methods))| (name, Interface { doc, methods }));
 
     // --- Struct ---
-    let struct_field = text::ident()
-        .map(str::to_string)
-        .padded()
-        .then_ignore(just(':').padded())
-        .then(type_parser.clone())
-        .map(|(name, ty)| Field { name, ty });
+    let struct_field = opt_doc_block
+        .clone()
+        .then(
+            text::ident()
+                .map(str::to_string)
+                .padded()
+                .then_ignore(just(':').padded())
+                .then(type_parser.clone()),
+        )
+        .map(|(doc, (name, ty))| Field { name, ty, doc });
     let struct_fields = struct_field
         .separated_by(just(',').padded())
         .allow_trailing()
@@ -227,12 +246,17 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
     // --- Enum ---
     let variant_fields = struct_fields
         .delimited_by(just('{').padded(), just('}').padded());
-    let enum_variant = text::ident()
-        .map(str::to_string)
-        .padded()
-        .then(variant_fields.or_not())
-        .map(|(name, fields)| EnumVariant {
+    let enum_variant = opt_doc_block
+        .clone()
+        .then(
+            text::ident()
+                .map(str::to_string)
+                .padded()
+                .then(variant_fields.or_not()),
+        )
+        .map(|(doc, (name, fields))| EnumVariant {
             name,
+            doc,
             fields: fields.unwrap_or_default(),
         });
     let enum_variants = enum_variant
@@ -296,7 +320,11 @@ pub fn parse_idl<'src>(name: &str, input: &'src str) -> Result<Protocol, Vec<Ric
 }
 
 fn f(name: &str, ty: Type) -> Field {
-    Field { name: name.to_string(), ty }
+    Field { name: name.to_string(), ty, doc: None }
+}
+
+fn fd(name: &str, ty: Type, doc: &str) -> Field {
+    Field { name: name.to_string(), ty, doc: Some(doc.to_string()) }
 }
 
 #[test]
@@ -586,6 +614,54 @@ fn test_doc_comments() {
     // Interface doc
     let iface = &protocol.interfaces["Node"];
     assert_eq!(iface.doc, "Spatial node");
+}
+
+#[test]
+fn test_field_and_variant_docs() {
+    let input = r#"
+        /// A color
+        struct Color {
+            /// Red channel
+            r: f32,
+            /// Green channel
+            g: f32,
+            /// Blue channel
+            b: f32,
+            a: f32,
+        }
+
+        /// Paint types
+        enum Paint {
+            /// No paint
+            None,
+            /// Solid color fill
+            Solid {
+                /// The fill color
+                color: Color,
+            },
+            Gradient {
+                start: Color,
+                end: Color,
+            },
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+
+    let s = &protocol.structs["Color"];
+    assert_eq!(s.fields[0], fd("r", Type::F32, "Red channel"));
+    assert_eq!(s.fields[1], fd("g", Type::F32, "Green channel"));
+    assert_eq!(s.fields[2], fd("b", Type::F32, "Blue channel"));
+    assert_eq!(s.fields[3], f("a", Type::F32)); // no doc
+
+    let e = &protocol.enums["Paint"];
+    assert_eq!(e.variants[0].name, "None");
+    assert_eq!(e.variants[0].doc, Some("No paint".to_string()));
+    assert_eq!(e.variants[1].name, "Solid");
+    assert_eq!(e.variants[1].doc, Some("Solid color fill".to_string()));
+    assert_eq!(e.variants[1].fields[0], fd("color", Type::Named("Color".into()), "The fill color"));
+    assert_eq!(e.variants[2].name, "Gradient");
+    assert_eq!(e.variants[2].doc, None); // no doc
+    assert_eq!(e.variants[2].fields[0], f("start", Type::Named("Color".into())));
 }
 
 #[test]
