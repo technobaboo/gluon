@@ -10,33 +10,42 @@ pub struct Protocol {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    pub name: String,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructDef {
     pub name: String,
-    pub fields: Vec<(String, Type)>,
+    pub doc: String,
+    pub fields: Vec<Field>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumDef {
     pub name: String,
+    pub doc: String,
     pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumVariant {
     pub name: String,
-    pub fields: Vec<(String, Type)>,
+    pub fields: Vec<Field>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
+    pub doc: String,
     methods: Vec<Method>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Method {
     name: String,
-    params: Vec<(String, Type)>,
+    params: Vec<Field>,
     /// if none, this is a oneway function.
     /// if some but vec is empty, this is a void function.
-    returns: Option<Vec<(String, Type)>>,
+    returns: Option<Vec<Field>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +72,40 @@ pub enum Type {
 }
 
 pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<'src, char>>> {
+    // --- Doc comment parser ---
+    // A single `/// text` line, returns the trimmed text content
+    let doc_line = one_of(" \t")
+        .repeated()
+        .ignore_then(just("///"))
+        .ignore_then(
+            none_of("\n\r")
+                .repeated()
+                .to_slice()
+                .map(|s: &str| {
+                    let s = s.strip_prefix(' ').unwrap_or(s);
+                    s.trim_end().to_string()
+                }),
+        )
+        .then_ignore(text::newline());
+
+    // Required doc block: one or more `///` lines, joined by newline
+    let req_doc_block = doc_line
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<std::string::String>>()
+        .map(|lines| lines.join("\n"))
+        .labelled("doc comment (/// ...)");
+
+    // Regular comment: `//` NOT followed by `/`
+    let comment = just("//")
+        .then(
+            none_of("/\n\r")
+                .then(none_of("\n\r").repeated())
+                .or_not(),
+        )
+        .or_not();
+
+    // --- Type parser ---
     let method_name = text::ident().map(str::to_string).labelled("method");
     let type_parser = recursive(|p| {
         choice((
@@ -101,30 +144,36 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                 .then(text::int(10).map(|s: &str| s.parse::<u32>().unwrap()))
                 .map(|(t, n): (Type, u32)| Type::Array(Box::new(t), n))
                 .delimited_by(just('['), just(']')),
-            just("Ref").then(
-                text::ident()
-                    .map(|s: &str| Some(s.to_string()))
-                    .delimited_by(just('<').padded(), just('>').padded())
-                    .or_not()
-                    .map(|opt| opt.flatten()),
-            ).map(|(_, name)| Type::Ref(name)),
+            just("Ref")
+                .then(
+                    text::ident()
+                        .map(|s: &str| Some(s.to_string()))
+                        .delimited_by(just('<').padded(), just('>').padded())
+                        .or_not()
+                        .map(|opt| opt.flatten()),
+                )
+                .map(|(_, name)| Type::Ref(name)),
             text::ident().map(|s: &str| Type::Named(s.to_string())),
         ))
         .padded()
         .labelled("type")
     });
+
+    // --- Params ---
     let param = text::ident()
         .map(str::to_string)
         .then_ignore(just(':').padded())
-        .then(type_parser.clone());
+        .then(type_parser.clone())
+        .map(|(name, ty)| Field { name, ty });
     let params = param
         .padded()
         .separated_by(just(','))
-        .collect::<Vec<(String, Type)>>()
+        .collect::<Vec<Field>>()
         .delimited_by(just('('), just(')'))
         .padded();
     let returns = just("->").padded().ignore_then(params.clone()).or_not();
-    let comment = just("//").then(none_of("\n\r").repeated()).or_not();
+
+    // --- Method ---
     let method = method_name
         .then(params.clone())
         .then(returns)
@@ -137,31 +186,45 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
     let methods = method
         .padded()
         .repeated()
-        .collect::<Vec<Method>>()
-        .map(|methods| Interface { methods });
-    let interface_inner = methods.delimited_by(just('{'), just('}')).padded();
-    let interface = keyword("interface")
-        .padded()
-        .ignore_then(text::ident().map(str::to_string).padded())
-        .then(interface_inner);
+        .collect::<Vec<Method>>();
 
-    // Struct field: `name: Type` with optional trailing comma
+    // --- Interface ---
+    let interface = req_doc_block
+        .clone()
+        .then(
+            one_of(" \t")
+                .repeated()
+                .ignore_then(keyword("interface"))
+                .padded()
+                .ignore_then(text::ident().map(str::to_string).padded())
+                .then(methods.delimited_by(just('{'), just('}')).padded()),
+        )
+        .map(|(doc, (name, methods))| (name, Interface { doc, methods }));
+
+    // --- Struct ---
     let struct_field = text::ident()
         .map(str::to_string)
         .padded()
         .then_ignore(just(':').padded())
-        .then(type_parser.clone());
+        .then(type_parser.clone())
+        .map(|(name, ty)| Field { name, ty });
     let struct_fields = struct_field
         .separated_by(just(',').padded())
         .allow_trailing()
-        .collect::<Vec<(String, Type)>>();
-    let struct_def = keyword("struct")
-        .padded()
-        .ignore_then(text::ident().map(str::to_string).padded())
-        .then(struct_fields.clone().delimited_by(just('{').padded(), just('}').padded()))
-        .map(|(name, fields)| StructDef { name, fields });
+        .collect::<Vec<Field>>();
+    let struct_def = req_doc_block
+        .clone()
+        .then(
+            one_of(" \t")
+                .repeated()
+                .ignore_then(keyword("struct"))
+                .padded()
+                .ignore_then(text::ident().map(str::to_string).padded())
+                .then(struct_fields.clone().delimited_by(just('{').padded(), just('}').padded())),
+        )
+        .map(|(doc, (name, fields))| StructDef { name, doc, fields });
 
-    // Enum variant: `Name` or `Name { fields }`
+    // --- Enum ---
     let variant_fields = struct_fields
         .delimited_by(just('{').padded(), just('}').padded());
     let enum_variant = text::ident()
@@ -176,13 +239,19 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         .separated_by(just(',').padded())
         .allow_trailing()
         .collect::<Vec<EnumVariant>>();
-    let enum_def = keyword("enum")
-        .padded()
-        .ignore_then(text::ident().map(str::to_string).padded())
-        .then(enum_variants.delimited_by(just('{').padded(), just('}').padded()))
-        .map(|(name, variants)| EnumDef { name, variants });
+    let enum_def = req_doc_block
+        .clone()
+        .then(
+            one_of(" \t")
+                .repeated()
+                .ignore_then(keyword("enum"))
+                .padded()
+                .ignore_then(text::ident().map(str::to_string).padded())
+                .then(enum_variants.delimited_by(just('{').padded(), just('}').padded())),
+        )
+        .map(|(doc, (name, variants))| EnumDef { name, doc, variants });
 
-    // Top-level items
+    // --- Top-level ---
     enum TopLevel {
         Interface(String, Interface),
         Struct(StructDef),
@@ -226,14 +295,19 @@ pub fn parse_idl<'src>(name: &str, input: &'src str) -> Result<Protocol, Vec<Ric
     Ok(protocol)
 }
 
+fn f(name: &str, ty: Type) -> Field {
+    Field { name: name.to_string(), ty }
+}
+
 #[test]
 fn test_parse_idl() {
     let input = r#"
-	    interface Test {
-			quit() // oneway transaction
-			ping() -> () // transaction with empty reply, ensures it got it
-			echo(input: String) -> (output: String) // just echo it back
-	    }
+        /// A test interface
+        interface Test {
+            quit() // oneway transaction
+            ping() -> () // transaction with empty reply, ensures it got it
+            echo(input: String) -> (output: String) // just echo it back
+        }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
     assert_eq!(
@@ -243,6 +317,7 @@ fn test_parse_idl() {
             interfaces: HashMap::from([(
                 "Test".to_string(),
                 Interface {
+                    doc: "A test interface".to_string(),
                     methods: vec![
                         Method {
                             name: "quit".to_string(),
@@ -256,8 +331,8 @@ fn test_parse_idl() {
                         },
                         Method {
                             name: "echo".to_string(),
-                            params: vec![("input".to_string(), Type::String)],
-                            returns: Some(vec![("output".to_string(), Type::String)]),
+                            params: vec![f("input", Type::String)],
+                            returns: Some(vec![f("output", Type::String)]),
                         },
                     ],
                 }
@@ -271,6 +346,7 @@ fn test_parse_idl() {
 #[test]
 fn test_parse_types() {
     let input = r#"
+        /// File storage interface
         interface FileStore {
             upload(data: Vec<u8>, name: String, executable: bool) -> (handle: Fd)
             read(handle: Fd, offset: u64, length: u32) -> (data: Vec<u8>, bytes_read: u32)
@@ -286,88 +362,68 @@ fn test_parse_types() {
     let iface = &protocol.interfaces["FileStore"];
     assert_eq!(iface.methods.len(), 8);
 
-    // upload: Vec<u8>, String, bool -> Fd
     assert_eq!(
         iface.methods[0].params,
         vec![
-            ("data".into(), Type::Vec(Box::new(Type::U8))),
-            ("name".into(), Type::String),
-            ("executable".into(), Type::Bool),
+            f("data", Type::Vec(Box::new(Type::U8))),
+            f("name", Type::String),
+            f("executable", Type::Bool),
         ]
     );
-    assert_eq!(
-        iface.methods[0].returns,
-        Some(vec![("handle".into(), Type::Fd)])
-    );
+    assert_eq!(iface.methods[0].returns, Some(vec![f("handle", Type::Fd)]));
 
-    // read: Fd, u64, u32 -> Vec<u8>, u32
     assert_eq!(
         iface.methods[1].params,
         vec![
-            ("handle".into(), Type::Fd),
-            ("offset".into(), Type::U64),
-            ("length".into(), Type::U32),
+            f("handle", Type::Fd),
+            f("offset", Type::U64),
+            f("length", Type::U32),
         ]
     );
     assert_eq!(
         iface.methods[1].returns,
         Some(vec![
-            ("data".into(), Type::Vec(Box::new(Type::U8))),
-            ("bytes_read".into(), Type::U32),
+            f("data", Type::Vec(Box::new(Type::U8))),
+            f("bytes_read", Type::U32),
         ])
     );
 
-    // hash: Fd -> [u8; 32]
     assert_eq!(
         iface.methods[2].returns,
-        Some(vec![("sha256".into(), Type::Array(Box::new(Type::U8), 32)),])
+        Some(vec![f("sha256", Type::Array(Box::new(Type::U8), 32))])
     );
 
-    // stat: Fd -> u64, u16, u32, u32
     assert_eq!(
         iface.methods[3].returns,
         Some(vec![
-            ("size".into(), Type::U64),
-            ("mode".into(), Type::U16),
-            ("uid".into(), Type::U32),
-            ("gid".into(), Type::U32),
+            f("size", Type::U64),
+            f("mode", Type::U16),
+            f("uid", Type::U32),
+            f("gid", Type::U32),
         ])
     );
 
-    // set_tags: Fd, Set<String> -> ()
-    assert_eq!(
-        iface.methods[4].params[1],
-        ("tags".into(), Type::Set(Box::new(Type::String)))
-    );
+    assert_eq!(iface.methods[4].params[1], f("tags", Type::Set(Box::new(Type::String))));
     assert_eq!(iface.methods[4].returns, Some(vec![]));
 
-    // get_metadata: Fd -> Map<String, String>
     assert_eq!(
         iface.methods[5].returns,
-        Some(vec![(
-            "metadata".into(),
-            Type::Map(Box::new(Type::String), Box::new(Type::String))
-        ),])
+        Some(vec![f("metadata", Type::Map(Box::new(Type::String), Box::new(Type::String)))])
     );
 
-    // measure: Fd -> f32, f64
     assert_eq!(
         iface.methods[6].returns,
-        Some(vec![
-            ("temperature".into(), Type::F32),
-            ("pressure".into(), Type::F64),
-        ])
+        Some(vec![f("temperature", Type::F32), f("pressure", Type::F64)])
     );
 
-    // adjust: i8, i16, i32, i64 -> ()
     assert_eq!(
         iface.methods[7].params,
         vec![
-            ("handle".into(), Type::Fd),
-            ("delta_x".into(), Type::I8),
-            ("delta_y".into(), Type::I16),
-            ("delta_z".into(), Type::I32),
-            ("delta_w".into(), Type::I64),
+            f("handle", Type::Fd),
+            f("delta_x", Type::I8),
+            f("delta_y", Type::I16),
+            f("delta_z", Type::I32),
+            f("delta_w", Type::I64),
         ]
     );
     assert_eq!(iface.methods[7].returns, Some(vec![]));
@@ -376,6 +432,7 @@ fn test_parse_types() {
 #[test]
 fn test_parse_ref_types() {
     let input = r#"
+        /// Reference type tests
         interface RefTest {
             get_any() -> (obj: Ref)
             get_display(name: String) -> (display: Ref<Display>)
@@ -385,35 +442,19 @@ fn test_parse_ref_types() {
     let protocol = parse_idl("RefTest", input).unwrap();
     let iface = &protocol.interfaces["RefTest"];
 
-    // get_any: -> Ref (untyped)
-    assert_eq!(
-        iface.methods[0].returns,
-        Some(vec![("obj".into(), Type::Ref(None))])
-    );
-
-    // get_display: String -> Ref<Display> (typed)
-    assert_eq!(
-        iface.methods[1].returns,
-        Some(vec![("display".into(), Type::Ref(Some("Display".into())))])
-    );
-
-    // bind: Ref, Ref<Compositor> -> Ref
+    assert_eq!(iface.methods[0].returns, Some(vec![f("obj", Type::Ref(None))]));
+    assert_eq!(iface.methods[1].returns, Some(vec![f("display", Type::Ref(Some("Display".into())))]));
     assert_eq!(
         iface.methods[2].params,
-        vec![
-            ("obj".into(), Type::Ref(None)),
-            ("iface".into(), Type::Ref(Some("Compositor".into()))),
-        ]
+        vec![f("obj", Type::Ref(None)), f("iface", Type::Ref(Some("Compositor".into())))]
     );
-    assert_eq!(
-        iface.methods[2].returns,
-        Some(vec![("bound".into(), Type::Ref(None))])
-    );
+    assert_eq!(iface.methods[2].returns, Some(vec![f("bound", Type::Ref(None))]));
 }
 
 #[test]
 fn test_parse_struct() {
     let input = r#"
+        /// A 3D vector
         struct Vec3 {
             x: f32,
             y: f32,
@@ -423,19 +464,14 @@ fn test_parse_struct() {
     let protocol = parse_idl("Test", input).unwrap();
     let s = &protocol.structs["Vec3"];
     assert_eq!(s.name, "Vec3");
-    assert_eq!(
-        s.fields,
-        vec![
-            ("x".into(), Type::F32),
-            ("y".into(), Type::F32),
-            ("z".into(), Type::F32),
-        ]
-    );
+    assert_eq!(s.doc, "A 3D vector");
+    assert_eq!(s.fields, vec![f("x", Type::F32), f("y", Type::F32), f("z", Type::F32)]);
 }
 
 #[test]
 fn test_parse_enum() {
     let input = r#"
+        /// Interaction methods
         enum Interaction {
             Pointer {
                 origin: f32,
@@ -453,21 +489,15 @@ fn test_parse_enum() {
     let protocol = parse_idl("Test", input).unwrap();
     let e = &protocol.enums["Interaction"];
     assert_eq!(e.name, "Interaction");
+    assert_eq!(e.doc, "Interaction methods");
     assert_eq!(e.variants.len(), 4);
 
     assert_eq!(e.variants[0].name, "Pointer");
-    assert_eq!(
-        e.variants[0].fields,
-        vec![("origin".into(), Type::F32), ("direction".into(), Type::F32)]
-    );
-
+    assert_eq!(e.variants[0].fields, vec![f("origin", Type::F32), f("direction", Type::F32)]);
     assert_eq!(e.variants[1].name, "Hand");
-    assert_eq!(e.variants[1].fields, vec![("joints".into(), Type::U32)]);
-
+    assert_eq!(e.variants[1].fields, vec![f("joints", Type::U32)]);
     assert_eq!(e.variants[2].name, "Touch");
-    assert_eq!(e.variants[2].fields, vec![("point".into(), Type::F32)]);
-
-    // Unit variant
+    assert_eq!(e.variants[2].fields, vec![f("point", Type::F32)]);
     assert_eq!(e.variants[3].name, "None");
     assert!(e.variants[3].fields.is_empty());
 }
@@ -475,12 +505,14 @@ fn test_parse_enum() {
 #[test]
 fn test_parse_mixed() {
     let input = r#"
+        /// A 3D vector
         struct Vec3 {
             x: f32,
             y: f32,
             z: f32,
         }
 
+        /// Hit test result
         enum HitResult {
             Miss,
             Surface {
@@ -490,6 +522,7 @@ fn test_parse_mixed() {
             },
         }
 
+        /// Spatial node interface
         interface Spatial {
             set_position(position: Vec3)
             interact(ray_origin: Vec3, ray_dir: Vec3) -> (hit: HitResult)
@@ -504,27 +537,60 @@ fn test_parse_mixed() {
 
     let iface = &protocol.interfaces["Spatial"];
     assert_eq!(iface.methods.len(), 3);
+    assert_eq!(iface.methods[0].params, vec![f("position", Type::Named("Vec3".into()))]);
+    assert_eq!(iface.methods[1].returns, Some(vec![f("hit", Type::Named("HitResult".into()))]));
+    assert_eq!(iface.methods[2].returns, Some(vec![f("child", Type::Ref(Some("Spatial".into())))]));
 
-    // set_position uses Named("Vec3")
-    assert_eq!(
-        iface.methods[0].params,
-        vec![("position".into(), Type::Named("Vec3".into()))]
-    );
-
-    // interact returns Named("HitResult")
-    assert_eq!(
-        iface.methods[1].returns,
-        Some(vec![("hit".into(), Type::Named("HitResult".into()))])
-    );
-
-    // get_child returns Ref<Spatial>
-    assert_eq!(
-        iface.methods[2].returns,
-        Some(vec![("child".into(), Type::Ref(Some("Spatial".into())))])
-    );
-
-    // Struct fields referencing other structs via Named
     let hit = &protocol.enums["HitResult"];
-    assert_eq!(hit.variants[1].fields[0], ("point".into(), Type::Named("Vec3".into())));
-    assert_eq!(hit.variants[1].fields[1], ("normal".into(), Type::Named("Vec3".into())));
+    assert_eq!(hit.variants[1].fields[0], f("point", Type::Named("Vec3".into())));
+    assert_eq!(hit.variants[1].fields[1], f("normal", Type::Named("Vec3".into())));
+}
+
+#[test]
+fn test_doc_comments() {
+    let input = r#"
+        /// Position in 3D space
+        /// with x, y, z components
+        struct Vec3 {
+            x: f32,
+            y: f32,
+            z: f32,
+        }
+
+        /// Input interaction type
+        enum InputType {
+            None,
+            Pointer {
+                origin: Vec3,
+                direction: Vec3,
+            },
+            Touch,
+        }
+
+        /// Spatial node
+        interface Node {
+            set_position(pos: Vec3)
+            get_name() -> (name: String)
+        }
+    "#;
+    let protocol = parse_idl("DocTest", input).unwrap();
+
+    // Multi-line struct doc
+    let s = &protocol.structs["Vec3"];
+    assert_eq!(s.doc, "Position in 3D space\nwith x, y, z components");
+
+    // Enum doc
+    let e = &protocol.enums["InputType"];
+    assert_eq!(e.doc, "Input interaction type");
+
+    // Interface doc
+    let iface = &protocol.interfaces["Node"];
+    assert_eq!(iface.doc, "Spatial node");
+}
+
+#[test]
+fn test_missing_required_doc() {
+    assert!(parse_idl("Test", "struct Foo { x: u32 }").is_err());
+    assert!(parse_idl("Test", "enum Bar { A, B }").is_err());
+    assert!(parse_idl("Test", "interface Baz { ping() -> () }").is_err());
 }
