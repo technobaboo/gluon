@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 binderbinder = { path = "../binderbinder" }
+chumsky = "0.12.0"
