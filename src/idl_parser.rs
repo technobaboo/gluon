@@ -1,12 +1,21 @@
 use chumsky::{prelude::*, text::keyword};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportDecl {
+    pub path: String,
+    pub alias: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Protocol {
-    name: String,
-    interfaces: HashMap<String, Interface>,
-    structs: HashMap<String, StructDef>,
-    enums: HashMap<String, EnumDef>,
+    pub name: String,
+    pub imports: Vec<ImportDecl>,
+    pub imported_protocols: HashMap<String, Protocol>,
+    pub interfaces: HashMap<String, Interface>,
+    pub structs: HashMap<String, StructDef>,
+    pub enums: HashMap<String, EnumDef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,14 +75,71 @@ pub enum Type {
     String,
     Fd,
     Ref(Option<String>), // binder object reference
-    Named(String),       // reference to a struct or enum by name
+    Named(String),                // reference to a struct or enum by name
+    Qualified(String, String),    // namespace::TypeName from an import
     Array(Box<Type>, u32),
     Vec(Box<Type>),
     Set(Box<Type>),
     Map(Box<Type>, Box<Type>),
 }
 
+#[derive(Debug)]
+pub enum LoadError {
+    Io(std::io::Error),
+    Parse(String),
+    CyclicImport(PathBuf),
+    DuplicateAlias(String),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Io(e) => write!(f, "IO error: {e}"),
+            LoadError::Parse(e) => write!(f, "Parse error: {e}"),
+            LoadError::CyclicImport(p) => write!(f, "Cyclic import: {}", p.display()),
+            LoadError::DuplicateAlias(a) => write!(f, "Duplicate import alias: {a}"),
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
+
+/// Derive the default alias from an import path.
+/// Takes the filename, strips `.gluon`, splits by `.`, and takes the last segment.
+pub fn default_alias(path: &str) -> String {
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    let stem = filename.strip_suffix(".gluon").unwrap_or(filename);
+    stem.rsplit('.').next().unwrap_or(stem).to_string()
+}
+
 pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<'src, char>>> {
+    // --- Import parser ---
+    let import_path = none_of("\"")
+        .repeated()
+        .at_least(1)
+        .to_slice()
+        .map(|s: &str| s.to_string())
+        .delimited_by(just('"'), just('"'));
+
+    let import_stmt = keyword("import")
+        .padded()
+        .ignore_then(import_path)
+        .then(
+            keyword("as")
+                .padded()
+                .ignore_then(text::ident().map(str::to_string))
+                .or_not(),
+        )
+        .map(|(path, alias_opt): (String, Option<String>)| {
+            let alias = alias_opt.unwrap_or_else(|| default_alias(&path));
+            ImportDecl { path, alias }
+        });
+
+    let imports = import_stmt
+        .padded()
+        .repeated()
+        .collect::<Vec<ImportDecl>>();
+
     // --- Doc comment parser ---
     // A single `/// text` line, returns the trimmed text content
     let doc_line = one_of(" \t")
@@ -152,13 +218,24 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             just("Ref")
                 .then(
                     text::ident()
-                        .map(|s: &str| Some(s.to_string()))
+                        .map(str::to_string)
+                        .then(just("::").ignore_then(text::ident().map(str::to_string)).or_not())
+                        .map(|(first, second)| match second {
+                            Some(name) => Some(format!("{first}::{name}")),
+                            None => Some(first),
+                        })
                         .delimited_by(just('<').padded(), just('>').padded())
                         .or_not()
                         .map(|opt| opt.flatten()),
                 )
                 .map(|(_, name)| Type::Ref(name)),
-            text::ident().map(|s: &str| Type::Named(s.to_string())),
+            text::ident()
+                .map(str::to_string)
+                .then(just("::").ignore_then(text::ident().map(str::to_string)).or_not())
+                .map(|(first, second)| match second {
+                    Some(name) => Type::Qualified(first, name),
+                    None => Type::Named(first),
+                }),
         ))
         .padded()
         .labelled("type")
@@ -281,12 +358,15 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         enum_def.map(TopLevel::Enum),
     ));
 
-    top_level_item
-        .padded()
-        .repeated()
-        .collect::<Vec<TopLevel>>()
+    imports
+        .then(
+            top_level_item
+                .padded()
+                .repeated()
+                .collect::<Vec<TopLevel>>(),
+        )
         .then_ignore(end())
-        .map(|items| {
+        .map(|(imports, items)| {
             let mut interfaces = HashMap::new();
             let mut structs = HashMap::new();
             let mut enums = HashMap::new();
@@ -305,6 +385,8 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             }
             Protocol {
                 name: "".to_string(),
+                imports,
+                imported_protocols: HashMap::new(),
                 interfaces,
                 structs,
                 enums,
@@ -333,6 +415,8 @@ fn test_parse_idl() {
         protocol,
         Protocol {
             name: "Test".to_string(),
+            imports: vec![],
+            imported_protocols: HashMap::new(),
             interfaces: HashMap::from([(
                 "Test".to_string(),
                 Interface {
@@ -925,4 +1009,329 @@ fn test_missing_required_doc() {
     assert!(parse_idl("Test", "struct Foo { x: u32 }").is_err());
     assert!(parse_idl("Test", "enum Bar { A, B }").is_err());
     assert!(parse_idl("Test", "interface Baz { ping() -> () }").is_err());
+}
+
+/// Load a `.gluon` protocol file from disk, recursively resolving imports.
+pub fn load_protocol(path: &Path) -> Result<Protocol, LoadError> {
+    let mut seen = HashSet::new();
+    let mut cache = HashMap::new();
+    load_protocol_inner(path, &mut seen, &mut cache)
+}
+
+fn load_protocol_inner(
+    path: &Path,
+    seen: &mut HashSet<PathBuf>,
+    cache: &mut HashMap<PathBuf, Protocol>,
+) -> Result<Protocol, LoadError> {
+    let canonical = path.canonicalize().map_err(LoadError::Io)?;
+
+    if let Some(cached) = cache.get(&canonical) {
+        return Ok(cached.clone());
+    }
+
+    if !seen.insert(canonical.clone()) {
+        return Err(LoadError::CyclicImport(canonical));
+    }
+
+    let source = std::fs::read_to_string(&canonical).map_err(LoadError::Io)?;
+    let name = default_alias(canonical.to_str().unwrap_or(""));
+    let mut protocol = parse_idl(&name, &source).map_err(|errs| {
+        let msgs: Vec<String> = errs.iter().map(|e| format!("{e}")).collect();
+        LoadError::Parse(msgs.join("; "))
+    })?;
+
+    // Check for duplicate aliases
+    let mut alias_set = HashSet::new();
+    for import in &protocol.imports {
+        if !alias_set.insert(import.alias.clone()) {
+            return Err(LoadError::DuplicateAlias(import.alias.clone()));
+        }
+    }
+
+    // Resolve imports
+    let parent_dir = canonical.parent().unwrap_or(Path::new("."));
+    for import in &protocol.imports {
+        let import_path = parent_dir.join(&import.path);
+        let imported = load_protocol_inner(&import_path, seen, cache)?;
+        protocol
+            .imported_protocols
+            .insert(import.alias.clone(), imported);
+    }
+
+    seen.remove(&canonical);
+    cache.insert(canonical, protocol.clone());
+    Ok(protocol)
+}
+
+// --- Import system tests ---
+
+#[test]
+fn test_default_alias() {
+    assert_eq!(default_alias("spatial.gluon"), "spatial");
+    assert_eq!(default_alias("org.stardustxr.spatial.gluon"), "spatial");
+    assert_eq!(default_alias("relative/path/types.gluon"), "types");
+    assert_eq!(default_alias("a/b/org.stardustxr.spatial.gluon"), "spatial");
+}
+
+#[test]
+fn test_parse_imports() {
+    let input = r#"
+        import "spatial.gluon"
+        import "other.gluon" as myalias
+
+        /// Test interface
+        interface Foo {
+            do_thing() -> ()
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    assert_eq!(protocol.imports.len(), 2);
+    assert_eq!(protocol.imports[0].path, "spatial.gluon");
+    assert_eq!(protocol.imports[0].alias, "spatial");
+    assert_eq!(protocol.imports[1].path, "other.gluon");
+    assert_eq!(protocol.imports[1].alias, "myalias");
+}
+
+#[test]
+fn test_parse_qualified_type_in_params() {
+    let input = r#"
+        import "spatial.gluon"
+
+        /// Test interface
+        interface Foo {
+            do_thing(pos: spatial::Vec3) -> (result: spatial::HitResult)
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    let iface = &protocol.interfaces["Foo"];
+    assert_eq!(
+        iface.methods[0].params[0].ty,
+        Type::Qualified("spatial".into(), "Vec3".into())
+    );
+    assert_eq!(
+        iface.methods[0].returns.as_ref().unwrap()[0].ty,
+        Type::Qualified("spatial".into(), "HitResult".into())
+    );
+}
+
+#[test]
+fn test_parse_qualified_type_in_containers() {
+    let input = r#"
+        import "spatial.gluon"
+
+        /// Test interface
+        interface Foo {
+            get_all() -> (items: Vec<spatial::Vec3>)
+            get_map() -> (m: Map<String, spatial::Vec3>)
+            get_arr() -> (a: [spatial::Vec3; 4])
+            get_ref() -> (r: Ref<spatial::Node>)
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    let iface = &protocol.interfaces["Foo"];
+
+    assert_eq!(
+        iface.methods[0].returns.as_ref().unwrap()[0].ty,
+        Type::Vec(Box::new(Type::Qualified("spatial".into(), "Vec3".into())))
+    );
+    assert_eq!(
+        iface.methods[1].returns.as_ref().unwrap()[0].ty,
+        Type::Map(
+            Box::new(Type::String),
+            Box::new(Type::Qualified("spatial".into(), "Vec3".into()))
+        )
+    );
+    assert_eq!(
+        iface.methods[2].returns.as_ref().unwrap()[0].ty,
+        Type::Array(
+            Box::new(Type::Qualified("spatial".into(), "Vec3".into())),
+            4
+        )
+    );
+    assert_eq!(
+        iface.methods[3].returns.as_ref().unwrap()[0].ty,
+        Type::Ref(Some("spatial::Node".into()))
+    );
+}
+
+#[test]
+fn test_parse_qualified_type_in_struct() {
+    let input = r#"
+        import "spatial.gluon"
+
+        /// A transform
+        struct Transform {
+            position: spatial::Vec3,
+            rotation: spatial::Quat,
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    let s = &protocol.structs["Transform"];
+    assert_eq!(
+        s.fields[0].ty,
+        Type::Qualified("spatial".into(), "Vec3".into())
+    );
+    assert_eq!(
+        s.fields[1].ty,
+        Type::Qualified("spatial".into(), "Quat".into())
+    );
+}
+
+#[test]
+fn test_parse_qualified_type_in_enum() {
+    let input = r#"
+        import "spatial.gluon"
+
+        /// Hit result
+        enum HitResult {
+            Miss,
+            Hit {
+                point: spatial::Vec3,
+            },
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    let e = &protocol.enums["HitResult"];
+    assert_eq!(
+        e.variants[1].fields[0].ty,
+        Type::Qualified("spatial".into(), "Vec3".into())
+    );
+}
+
+#[test]
+fn test_load_protocol_basic() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+
+    // Write spatial.gluon
+    let spatial_path = dir.path().join("spatial.gluon");
+    let mut f = std::fs::File::create(&spatial_path).unwrap();
+    write!(
+        f,
+        "/// A 3D vector\nstruct Vec3 {{\n    x: f32,\n    y: f32,\n    z: f32,\n}}\n"
+    )
+    .unwrap();
+
+    // Write main.gluon that imports spatial
+    let main_path = dir.path().join("main.gluon");
+    let mut f = std::fs::File::create(&main_path).unwrap();
+    write!(
+        f,
+        "import \"spatial.gluon\"\n\n/// Main interface\ninterface Main {{\n    move_to(pos: spatial::Vec3)\n}}\n"
+    )
+    .unwrap();
+
+    let protocol = load_protocol(&main_path).unwrap();
+    assert_eq!(protocol.imports.len(), 1);
+    assert_eq!(protocol.imports[0].alias, "spatial");
+    assert!(protocol.imported_protocols.contains_key("spatial"));
+
+    let spatial = &protocol.imported_protocols["spatial"];
+    assert!(spatial.structs.contains_key("Vec3"));
+
+    let iface = &protocol.interfaces["Main"];
+    assert_eq!(
+        iface.methods[0].params[0].ty,
+        Type::Qualified("spatial".into(), "Vec3".into())
+    );
+}
+
+#[test]
+fn test_load_protocol_cyclic_import() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+
+    let a_path = dir.path().join("a.gluon");
+    let b_path = dir.path().join("b.gluon");
+
+    let mut f = std::fs::File::create(&a_path).unwrap();
+    write!(f, "import \"b.gluon\"\n\n/// A\ninterface A {{\n    ping() -> ()\n}}\n").unwrap();
+
+    let mut f = std::fs::File::create(&b_path).unwrap();
+    write!(f, "import \"a.gluon\"\n\n/// B\ninterface B {{\n    pong() -> ()\n}}\n").unwrap();
+
+    let result = load_protocol(&a_path);
+    assert!(matches!(result, Err(LoadError::CyclicImport(_))));
+}
+
+#[test]
+fn test_load_protocol_file_not_found() {
+    let result = load_protocol(Path::new("/nonexistent/path/test.gluon"));
+    assert!(matches!(result, Err(LoadError::Io(_))));
+}
+
+#[test]
+fn test_load_protocol_duplicate_alias() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+
+    let types_path = dir.path().join("types.gluon");
+    let mut f = std::fs::File::create(&types_path).unwrap();
+    write!(f, "/// A type\nstruct Foo {{\n    x: u32,\n}}\n").unwrap();
+
+    let other_dir = dir.path().join("sub");
+    std::fs::create_dir(&other_dir).unwrap();
+    let other_types_path = other_dir.join("types.gluon");
+    let mut f = std::fs::File::create(&other_types_path).unwrap();
+    write!(f, "/// Another type\nstruct Bar {{\n    y: u32,\n}}\n").unwrap();
+
+    let main_path = dir.path().join("main.gluon");
+    let mut f = std::fs::File::create(&main_path).unwrap();
+    write!(
+        f,
+        "import \"types.gluon\"\nimport \"sub/types.gluon\"\n\n/// Main\ninterface Main {{\n    ping() -> ()\n}}\n"
+    )
+    .unwrap();
+
+    let result = load_protocol(&main_path);
+    assert!(matches!(result, Err(LoadError::DuplicateAlias(_))));
+}
+
+#[test]
+fn test_load_protocol_diamond_import() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+
+    // shared.gluon
+    let shared_path = dir.path().join("shared.gluon");
+    let mut f = std::fs::File::create(&shared_path).unwrap();
+    write!(f, "/// Shared type\nstruct Vec3 {{\n    x: f32,\n    y: f32,\n    z: f32,\n}}\n").unwrap();
+
+    // a.gluon imports shared
+    let a_path = dir.path().join("a.gluon");
+    let mut f = std::fs::File::create(&a_path).unwrap();
+    write!(f, "import \"shared.gluon\"\n\n/// A\ninterface A {{\n    get_pos() -> (pos: shared::Vec3)\n}}\n").unwrap();
+
+    // b.gluon imports shared
+    let b_path = dir.path().join("b.gluon");
+    let mut f = std::fs::File::create(&b_path).unwrap();
+    write!(f, "import \"shared.gluon\"\n\n/// B\ninterface B {{\n    set_pos(pos: shared::Vec3)\n}}\n").unwrap();
+
+    // main.gluon imports both a and b
+    let main_path = dir.path().join("main.gluon");
+    let mut f = std::fs::File::create(&main_path).unwrap();
+    write!(f, "import \"a.gluon\"\nimport \"b.gluon\"\n\n/// Main\ninterface Main {{\n    ping() -> ()\n}}\n").unwrap();
+
+    let protocol = load_protocol(&main_path).unwrap();
+    assert!(protocol.imported_protocols.contains_key("a"));
+    assert!(protocol.imported_protocols.contains_key("b"));
+
+    // Both a and b should have resolved their shared import
+    let a = &protocol.imported_protocols["a"];
+    assert!(a.imported_protocols.contains_key("shared"));
+    let b = &protocol.imported_protocols["b"];
+    assert!(b.imported_protocols.contains_key("shared"));
+}
+
+#[test]
+fn test_parse_no_imports() {
+    let input = r#"
+        /// Test interface
+        interface Foo {
+            ping() -> ()
+        }
+    "#;
+    let protocol = parse_idl("Test", input).unwrap();
+    assert!(protocol.imports.is_empty());
+    assert!(protocol.imported_protocols.is_empty());
 }
