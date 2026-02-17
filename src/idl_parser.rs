@@ -74,9 +74,9 @@ pub enum Type {
     F64,
     String,
     Fd,
-    Ref(Option<String>), // binder object reference
-    Named(String),                // reference to a struct or enum by name
-    Qualified(String, String),    // namespace::TypeName from an import
+    Ref(Option<String>),       // binder object reference
+    Named(String),             // reference to a struct or enum by name
+    Qualified(String, String), // namespace::TypeName from an import
     Array(Box<Type>, u32),
     Vec(Box<Type>),
     Set(Box<Type>),
@@ -139,10 +139,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
 
     // Syntax:  (import ...)*
     // Output:  Vec<ImportDecl>
-    let imports = import_stmt
-        .padded()
-        .repeated()
-        .collect::<Vec<ImportDecl>>();
+    let imports = import_stmt.padded().repeated().collect::<Vec<ImportDecl>>();
 
     // --- Doc comment ---
     // Syntax:  /// text\n
@@ -231,7 +228,11 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                 .then(
                     text::ident()
                         .map(str::to_string)
-                        .then(just("::").ignore_then(text::ident().map(str::to_string)).or_not())
+                        .then(
+                            just("::")
+                                .ignore_then(text::ident().map(str::to_string))
+                                .or_not(),
+                        )
                         .map(|(first, second)| match second {
                             Some(name) => Some(format!("{first}::{name}")),
                             None => Some(first),
@@ -243,7 +244,11 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                 .map(|(_, name)| Type::Ref(name)),
             text::ident()
                 .map(str::to_string)
-                .then(just("::").ignore_then(text::ident().map(str::to_string)).or_not())
+                .then(
+                    just("::")
+                        .ignore_then(text::ident().map(str::to_string))
+                        .or_not(),
+                )
                 .map(|(first, second)| match second {
                     Some(name) => Type::Qualified(first, name),
                     None => Type::Named(first),
@@ -1281,10 +1286,18 @@ fn test_load_protocol_cyclic_import() {
     let b_path = dir.path().join("b.gluon");
 
     let mut f = std::fs::File::create(&a_path).unwrap();
-    write!(f, "import \"b.gluon\"\n\n/// A\ninterface A {{\n    ping() -> ()\n}}\n").unwrap();
+    write!(
+        f,
+        "import \"b.gluon\"\n\n/// A\ninterface A {{\n    ping() -> ()\n}}\n"
+    )
+    .unwrap();
 
     let mut f = std::fs::File::create(&b_path).unwrap();
-    write!(f, "import \"a.gluon\"\n\n/// B\ninterface B {{\n    pong() -> ()\n}}\n").unwrap();
+    write!(
+        f,
+        "import \"a.gluon\"\n\n/// B\ninterface B {{\n    pong() -> ()\n}}\n"
+    )
+    .unwrap();
 
     let result = load_protocol(&a_path);
     assert!(matches!(result, Err(LoadError::CyclicImport(_))));
@@ -1331,7 +1344,11 @@ fn test_load_protocol_diamond_import() {
     // shared.gluon
     let shared_path = dir.path().join("shared.gluon");
     let mut f = std::fs::File::create(&shared_path).unwrap();
-    write!(f, "/// Shared type\nstruct Vec3 {{\n    x: f32,\n    y: f32,\n    z: f32,\n}}\n").unwrap();
+    write!(
+        f,
+        "/// Shared type\nstruct Vec3 {{\n    x: f32,\n    y: f32,\n    z: f32,\n}}\n"
+    )
+    .unwrap();
 
     // a.gluon imports shared
     let a_path = dir.path().join("a.gluon");
@@ -1341,7 +1358,11 @@ fn test_load_protocol_diamond_import() {
     // b.gluon imports shared
     let b_path = dir.path().join("b.gluon");
     let mut f = std::fs::File::create(&b_path).unwrap();
-    write!(f, "import \"shared.gluon\"\n\n/// B\ninterface B {{\n    set_pos(pos: shared::Vec3)\n}}\n").unwrap();
+    write!(
+        f,
+        "import \"shared.gluon\"\n\n/// B\ninterface B {{\n    set_pos(pos: shared::Vec3)\n}}\n"
+    )
+    .unwrap();
 
     // main.gluon imports both a and b
     let main_path = dir.path().join("main.gluon");
@@ -1368,6 +1389,14 @@ fn test_parse_no_imports() {
         }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
+    assert!(protocol.imports.is_empty());
+    assert!(protocol.imported_protocols.is_empty());
+}
+
+#[test]
+fn test_parse_real_interface() {
+    let input = include_str!("../gluon/org.stardustxr.gluon.test.gluon");
+    let protocol = parse_idl("test", input).unwrap();
     assert!(protocol.imports.is_empty());
     assert!(protocol.imported_protocols.is_empty());
 }

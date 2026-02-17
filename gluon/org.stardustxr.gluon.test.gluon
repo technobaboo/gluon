@@ -1,5 +1,16 @@
+/// Test interface
 interface Test {
-	quit() // oneway transaction
-	ping() -> () // transaction with empty reply, ensures it got it
-	echo(input: String) -> (output: String) // just echo it back
+	/// Quit the test
+	// oneway transaction
+	quit()
+
+	/// Ping the test
+	// transaction with empty reply, ensures it got it
+	ping() -> ()
+
+	/// Echo the input string
+	echo(input: String) -> (output: String)
+
+	/// Echo the ref back
+	echo_ref(input: Ref) -> (output: Ref)
 }
