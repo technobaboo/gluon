@@ -107,6 +107,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "codegen-test"
+version = "0.1.0"
+dependencies = [
+ "binderbinder",
+ "convert_case",
+ "gluon-binder",
+ "gluon-codegen-rust",
+ "gluon-wire",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "tokio",
+]
+
+[[package]]
+name = "convert_case"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "affbf0190ed2caf063e3def54ff444b449371d55c58e513a95ab98eca50adb49"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -180,6 +205,17 @@ dependencies = [
  "binderbinder",
  "chumsky",
  "tempfile",
+]
+
+[[package]]
+name = "gluon-codegen-rust"
+version = "0.1.0"
+dependencies = [
+ "convert_case",
+ "gluon-binder",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
 ]
 
 [[package]]
@@ -572,9 +608,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "2.0.116"
+version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3df424c70518695237746f84cede799c9c58fcb37450d7b23716568cc8bc69cb"
+checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
 dependencies = [
  "proc-macro2",
  "quote",

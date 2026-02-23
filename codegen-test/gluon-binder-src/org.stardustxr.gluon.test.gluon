@@ -1,0 +1,35 @@
+/// Test interface
+interface Test {
+	quit()
+
+	ping() -> ()
+
+	echo(input: String) -> (output: String)
+
+	echo_ref(input: Ref<Test2>) -> (output: Ref<Test2>)
+}
+
+/// test struct
+struct TestStruct {
+	string: String,
+	id: u64,
+}
+
+/// Test enum
+enum TestEnum {
+	StringVariant {
+		string: String,
+	},
+	EmptyVairant
+}
+
+/// Test2 interface
+interface Test2 {
+	quit()
+
+	ping() -> ()
+
+	echo(input: String) -> (output: String)
+
+	echo_ref(input: Ref) -> (output: Ref)
+}

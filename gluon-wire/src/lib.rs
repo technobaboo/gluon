@@ -18,9 +18,25 @@ pub struct GluonDataBuilder<'a> {
 pub struct GluonDataReader {
     payload: PayloadReader,
 }
+impl<'a> GluonDataBuilder<'a> {
+    pub fn new() -> Self {
+        Self {
+            payload: PayloadBuilder::new(),
+        }
+    }
+    pub fn to_payload(self) -> PayloadBuilder<'a> {
+        self.payload
+    }
+}
+impl GluonDataReader {
+    pub fn from_payload(payload: PayloadReader) -> Self {
+        Self { payload }
+    }
+}
 
 pub trait GluonConvertable: 'static + Sized {
     fn write<'a, 'b: 'a>(&'b self, data: &mut GluonDataBuilder<'a>) -> Result<(), GluonWriteError>;
+    fn write_owned(self, data: &mut GluonDataBuilder<'_>) -> Result<(), GluonWriteError>;
     fn read(data: &mut GluonDataReader) -> Result<Self, GluonReadError>;
 }
 impl<'a> GluonDataBuilder<'a> {
@@ -46,6 +62,10 @@ impl<'a> GluonDataBuilder<'a> {
     }
     pub fn write_fd<'fd: 'a>(&mut self, fd: BorrowedFd<'fd>) -> Result<(), GluonWriteError> {
         self.payload.push_fd(fd, 0);
+        Ok(())
+    }
+    pub fn write_owned_fd(&mut self, fd: OwnedFd) -> Result<(), GluonWriteError> {
+        self.payload.push_owned_fd(fd, 0);
         Ok(())
     }
     pub fn write_binder(
@@ -252,4 +272,6 @@ pub enum GluonReadError {
     UnregisteredBinderObject,
     #[error("String data is not valid utf8: {0}")]
     StringNotUtf8(#[from] FromUtf8Error),
+    #[error("Unkown enum variant: {0}")]
+    UnknownEnumVariant(u16),
 }

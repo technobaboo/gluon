@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [workspace]
-members = ["gluon-wire"]
+members = ["codegen-test","gluon-codegen-rust", "gluon-wire"]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,6 +16,9 @@ chumsky = "0.12.0"
 
 [workspace.dependencies]
 binderbinder = { path = "../binderbinder" }
+gluon-binder.path = "."
+gluon-wire.path = "./gluon-wire"
+gluon-codegen-rust.path = "./gluon-codegen-rust"
 
 [dev-dependencies]
 tempfile = "3"

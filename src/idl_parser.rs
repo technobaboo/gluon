@@ -48,15 +48,15 @@ pub struct EnumVariant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interface {
     pub doc: String,
-    methods: Vec<Method>,
+    pub methods: Vec<Method>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Method {
-    name: String,
-    params: Vec<Field>,
+    pub name: String,
+    pub params: Vec<Field>,
     /// if none, this is a oneway function.
     /// if some but vec is empty, this is a void function.
-    returns: Option<Vec<Field>>,
+    pub returns: Option<Vec<Field>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,0 +1,412 @@
+use convert_case::{Case, Casing};
+use gluon_binder::idl_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
+use proc_macro2::Ident;
+use quote::{format_ident, quote};
+pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::TokenStream {
+    let name = format_ident!("{}", interface_name.to_case(Case::Pascal));
+    let handler_name = format_ident!("{name}Handler");
+    let handler = {
+        let methods_dispatch = def
+            .methods
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.returns.is_some())
+            .map(|(i, method)| {
+                let i = i + 8;
+                let params = method
+                    .params
+                    .iter()
+                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data).unwrap()});
+                let name = format_ident!("{}", method.name.to_case(Case::Snake));
+                let return_names = method
+                    .returns
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
+                    .collect::<Vec<_>>();
+                let i = i as u32;
+                quote! {
+                    #i => {
+                        let (#(#return_names),*) = self.#name(#(#params),*).await;
+                        #(
+                            #return_names.write_owned(&mut out).unwrap();
+                        )*
+                    },
+                }
+            });
+        let oneway_methods_dispatch = def
+            .methods
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.returns.is_none())
+            .map(|(i, method)| {
+                let i = i + 8;
+                let params = method
+                    .params
+                    .iter()
+                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data).unwrap()});
+                let name = format_ident!("{}", method.name.to_case(Case::Snake));
+                let i = i as u32;
+                quote! {
+                    #i => {
+                        self.#name(#(#params),*);
+                    },
+                }
+            });
+        let methods = def.methods.iter().map(|method| {
+            let params = method.params.iter().map(|param| {
+                let type_def = gen_type(&param.ty);
+                let name = format_ident!("{}", param.name.to_case(Case::Snake));
+                quote! {
+                    #name: #type_def
+                }
+            });
+            let name = format_ident!("{}", method.name.to_case(Case::Snake));
+            // TODO: gen return docs and names into main fn docs?
+            let return_types = method
+                .returns
+                .as_ref()
+                .map(|v| v.iter().map(|v| gen_type(&v.ty)).collect::<Vec<_>>());
+            let fn_return = match return_types.as_ref().map(|v| v.as_slice()) {
+                None => {
+                    quote! {}
+                }
+                Some(types) => {
+                    let types = match types {
+                        [] => quote! {()},
+                        [ty] => quote! {#ty},
+                        types => quote! {(#(#types),*)},
+                    };
+                    quote! {
+                        -> impl Future<Output=#types> + Send + Sync
+                    }
+                }
+            };
+            quote! {
+                fn #name(&self, #(#params),*) #fn_return;
+            }
+        });
+        quote! {
+            pub trait #handler_name: binderbinder::device::TransactionHandler + Send + Sync + 'static {
+                #(#methods)*
+
+                fn dispatch_two_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=gluon_wire::GluonDataBuilder<'static>> + Send + Sync {
+                    async move {
+                        let mut out = gluon_wire::GluonDataBuilder::new();
+                        match transaction_code {
+                            #(#methods_dispatch)*
+                            _ => {}
+                        }
+                        out
+                    }
+                }
+                fn dispatch_one_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=()> + Send + Sync {
+                    async move {
+                        match transaction_code {
+                            #(#oneway_methods_dispatch)*
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    };
+    let proxy = {
+        let methods = def.methods.iter().enumerate().map(|(i, method)| {
+            let params = method.params.iter().map(|param| {
+                let type_def = gen_type(&param.ty);
+                let name = format_ident!("{}", param.name.to_case(Case::Snake));
+                quote! {
+                    #name: #type_def
+                }
+            });
+            let params_write = method.params.iter().map(|param| {
+                let name = format_ident!("{}", param.name.to_case(Case::Snake));
+                quote! {#name.write(&mut builder).unwrap();}
+            });
+            let name = format_ident!("{}", method.name.to_case(Case::Snake));
+            // TODO: gen return docs and names into main fn docs?
+            let return_types = method
+                .returns
+                .as_ref()
+                .map(|v| v.iter().map(|v| gen_type(&v.ty)).collect::<Vec<_>>());
+            let i = i as u32;
+            // TODO: doc string on method
+            match return_types {
+                Some(types) => {
+                    let fn_return = match types.as_slice() {
+                        [] => quote! {()},
+                        [ty] => quote! {#ty},
+                        types => quote! {(#(#types),*)},
+                    };
+                    let return_tuple = match types.as_slice() {
+                        [] => quote! {},
+                        [_] => quote! {gluon_wire::GluonConvertable::read(&mut reader).unwrap()},
+                        types => {
+                            let types = types
+                                .iter()
+                                .map(|_| quote! {gluon_wire::GluonConvertable::read(&mut reader).unwrap()});
+                            quote! {(#(#types),*)}
+                        }
+                    };
+                    quote! {
+                        pub async fn #name(&self, #(#params),*) -> #fn_return {
+                            let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(&self.0);
+                            tokio::task::spawn_blocking(move || {
+                                let mut builder = gluon_wire::GluonDataBuilder::new();
+                                #(#params_write)*
+                                let reader = obj.device().transact_blocking(&obj, #i, builder.to_payload()).unwrap().1;
+                                let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
+                                #return_tuple
+                            }).await.unwrap()
+                        }
+                    }
+                }
+                None => quote! {
+                    pub fn #name(&self, #(#params),*) {
+                        let builder = gluon_wire::GluonDataBuilder::new();
+                        #(#params_write)*
+                        self.0.device().transact_one_way(&self.0, #i, builder.to_payload()).unwrap();
+                    }
+                },
+            }
+        });
+        quote! {
+            pub struct #name(binderbinder::binder_object::BinderObjectOrRef);
+
+            impl gluon_wire::GluonConvertable for #name {
+                fn write<'a, 'b: 'a>(
+                    &'b self,
+                    data: &mut gluon_wire::GluonDataBuilder<'a>,
+                ) -> Result<(), gluon_wire::GluonWriteError> {
+                    self.0.write(data)
+                }
+
+                fn read(data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                    Ok(#name(binderbinder::binder_object::BinderObjectOrRef::read(data)?))
+                }
+
+                fn write_owned(self, data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                    self.0.write_owned(data)
+                }
+            }
+            impl #name {
+                #(#methods)*
+                pub fn from_handler<H: #handler_name>(obj: &std::sync::Arc<binderbinder::binder_object::BinderObject<H>>) -> #name {
+                    #name(binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(obj))
+                }
+            }
+            impl binderbinder::binder_object::ToBinderObjectOrRef for #name {
+                fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
+                    self.0.to_binder_object_or_ref()
+                }
+            }
+        }
+    };
+    quote! {
+        #proxy
+        #handler
+    }
+}
+
+pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
+    let fields = def.fields.iter().map(gen_field);
+    let name = format_ident!("{}", def.name.to_case(Case::Pascal));
+    let doc = &def.doc;
+    let gluon_trait_impl = {
+        let field_names = def
+            .fields
+            .iter()
+            .map(|v| format_ident!("{}", v.name))
+            .collect::<Vec<_>>();
+        quote! {
+            impl gluon_wire::GluonConvertable for #name {
+                fn write<'a, 'b: 'a>(
+                    &'b self,
+                    data: &mut gluon_wire::GluonDataBuilder<'a>,
+                ) -> Result<(), gluon_wire::GluonWriteError> {
+                    #(self.#field_names.write(data)?;)*
+                    Ok(())
+                }
+
+                fn read(data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                    #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
+                    Ok(#name {#(#field_names,)*})
+                }
+
+                fn write_owned(self, data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                    #(self.#field_names.write_owned(data)?;)*
+                    Ok(())
+                }
+            }
+        }
+    };
+    quote! {
+        #[doc = #doc]
+        pub struct #name {
+            #(#fields)*
+        }
+
+        #gluon_trait_impl
+    }
+}
+
+pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
+    let variants = def.variants.iter().map(|variant| {
+        let fields = variant.fields.iter().map(gen_field);
+        let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
+        let doc_comment = variant.doc.as_ref().map(|str| quote! {#[doc = #str]});
+        quote! {
+            #doc_comment
+            #name {
+                #(#fields)*
+            }
+        }
+    });
+    let enum_name = format_ident!("{}", def.name.to_case(Case::Pascal));
+    let doc = &def.doc;
+    let gluon_trait_impl = {
+        let write_variants = def.variants.iter().enumerate().map(|(i, variant)| {
+            let field_names = variant
+                .fields
+                .iter()
+                .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
+                .collect::<Vec<_>>();
+            let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
+            let i = i as u16;
+            quote! {
+                #enum_name::#name { #(#field_names),* } => {
+                    data.write_u16(#i)?;
+                    #(#field_names.write(data)?;)*
+                },
+            }
+        });
+        let write_owned_variants = def.variants.iter().enumerate().map(|(i, variant)| {
+            let field_names = variant
+                .fields
+                .iter()
+                .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
+                .collect::<Vec<_>>();
+            let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
+            let i = i as u16;
+            quote! {
+                #enum_name::#name { #(#field_names),* } => {
+                    data.write_u16(#i)?;
+                    #(#field_names.write_owned(data)?;)*
+                },
+            }
+        });
+        let read_variants = def.variants.iter().enumerate().map(|(i, variant)| {
+            let field_names = variant
+                .fields
+                .iter()
+                .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
+                .collect::<Vec<_>>();
+            let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
+            let i = i as u16;
+            quote! {
+                #i => {
+                    #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
+                    #enum_name::#name { #(#field_names,)* }
+                },
+            }
+        });
+        quote! {
+            impl gluon_wire::GluonConvertable for #enum_name {
+                fn write<'a, 'b: 'a>(
+                    &'b self,
+                    data: &mut gluon_wire::GluonDataBuilder<'a>,
+                ) -> Result<(), gluon_wire::GluonWriteError> {
+                    match self {
+                        #(#write_variants)*
+                    };
+                    Ok(())
+                }
+
+                fn read(data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                    Ok(match data.read_u16()? {
+                        #(#read_variants)*
+                        v => return Err(gluon_wire::GluonReadError::UnknownEnumVariant(v)),
+                    })
+                }
+
+                fn write_owned(self, data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                    match self {
+                        #(#write_owned_variants)*
+                    };
+                    Ok(())
+                }
+            }
+        }
+    };
+    quote! {
+        #[doc = #doc]
+        pub enum #enum_name {
+            #(#variants),*
+        }
+
+        #gluon_trait_impl
+    }
+}
+
+pub fn gen_field(def: &Field) -> proc_macro2::TokenStream {
+    let type_def = gen_type(&def.ty);
+    let name = format_ident!("{}", def.name.to_case(Case::Snake));
+    let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
+    quote! {
+        #doc_comment
+        #name: #type_def,
+    }
+}
+
+pub fn gen_type(def: &Type) -> proc_macro2::TokenStream {
+    match def {
+        Type::Bool => quote! {bool},
+        Type::U8 => quote! {u8},
+        Type::U16 => quote! {u16},
+        Type::U32 => quote! {u32},
+        Type::U64 => quote! {u64},
+        Type::I8 => quote! {i8},
+        Type::I16 => quote! {i16},
+        Type::I32 => quote! {i32},
+        Type::I64 => quote! {i64},
+        Type::F32 => quote! {f32},
+        Type::F64 => quote! {i64},
+        Type::String => quote! {String},
+        Type::Fd => quote! {std::os::fd::OwnedFd},
+        Type::Ref(ref_type) => match ref_type {
+            Some(name) => {
+                let name = format_ident!("{}", name.to_case(Case::Pascal));
+                quote! {#name}
+            }
+            None => quote! {binderbinder::binder_object::BinderObjectOrRef},
+        },
+        Type::Named(name) => {
+            let name = format_ident!("{}", name.to_case(Case::Pascal));
+            quote! {#name}
+        }
+        Type::Qualified(space, name) => {
+            let space = format_ident!("{}", space.to_case(Case::Snake));
+            let name = format_ident!("{}", name.to_case(Case::Pascal));
+            quote! {#space::#name}
+        }
+        Type::Array(type_def, len) => {
+            let type_def = gen_type(&type_def);
+            quote! {[#type_def; #len]}
+        }
+        Type::Vec(type_def) => {
+            let type_def = gen_type(&type_def);
+            quote! {Vec<#type_def>}
+        }
+        Type::Set(type_def) => {
+            let type_def = gen_type(&type_def);
+            quote! {std::collections::hash::HashSet<#type_def>}
+        }
+        Type::Map(key, value) => {
+            let key = gen_type(&key);
+            let value = gen_type(&value);
+            quote! {std::collections::hash::HashMap<#key,#value>}
+        }
+    }
+}
