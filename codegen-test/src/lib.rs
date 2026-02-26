@@ -1,4 +1,7 @@
-use std::process;
+use std::{
+    hash::{DefaultHasher, Hash},
+    process,
+};
 
 use binderbinder::{TransactionHandler, device::Transaction, payload::PayloadBuilder};
 use gluon_wire::GluonDataReader;
@@ -15,6 +18,8 @@ impl TestHandler for TestHandlerImpl {
 
     async fn ping(&self) {
         println!("got ping");
+        let mut hasher = DefaultHasher::new();
+        c"nya~".to_owned().hash(&mut hasher);
     }
 
     async fn echo(&self, input: String) -> String {

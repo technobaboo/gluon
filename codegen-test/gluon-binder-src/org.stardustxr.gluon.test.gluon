@@ -1,3 +1,4 @@
+import "fusion::spatial"
 /// Test interface
 interface Test {
 	quit()
@@ -19,6 +20,9 @@ struct TestStruct {
 enum TestEnum {
 	StringVariant {
 		string: String,
+	},
+	WeirdStuff {
+		spatial: spatial::SpatialRef,
 	},
 	EmptyVairant
 }

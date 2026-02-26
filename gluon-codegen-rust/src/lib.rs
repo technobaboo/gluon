@@ -2,6 +2,26 @@ use convert_case::{Case, Casing};
 use gluon_binder::idl_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
 use proc_macro2::Ident;
 use quote::{format_ident, quote};
+pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
+    let interfaces = proto
+        .interfaces
+        .iter()
+        .map(|(name, interface)| gen_interface(name, interface));
+    let structs = proto.structs.iter().map(|(name, def)| gen_struct(def));
+    let enums = proto.enums.iter().map(|(name, def)| gen_enum(def));
+    let imports = proto.imports.iter().map(|def| {
+        dbg!(&def);
+        let path = def.path.split("::").map(|v| format_ident!("{}", v));
+        quote! {use #(#path)::*;}
+    });
+    quote! {
+        use gluon_wire::GluonConvertable;
+        #(#imports)*
+        #(#interfaces)*
+        #(#structs)*
+        #(#enums)*
+    }
+}
 pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::TokenStream {
     let name = format_ident!("{}", interface_name.to_case(Case::Pascal));
     let handler_name = format_ident!("{name}Handler");
