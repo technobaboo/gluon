@@ -1,14 +1,13 @@
 use convert_case::{Case, Casing};
 use gluon_binder::idl_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
-use proc_macro2::Ident;
 use quote::{format_ident, quote};
 pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
     let interfaces = proto
         .interfaces
         .iter()
         .map(|(name, interface)| gen_interface(name, interface));
-    let structs = proto.structs.iter().map(|(name, def)| gen_struct(def));
-    let enums = proto.enums.iter().map(|(name, def)| gen_enum(def));
+    let structs = proto.structs.iter().map(|(_name, def)| gen_struct(def));
+    let enums = proto.enums.iter().map(|(_name, def)| gen_enum(def));
     let imports = proto.imports.iter().map(|def| {
         dbg!(&def);
         let path = def.path.split("::").map(|v| format_ident!("{}", v));
@@ -193,6 +192,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
             }
         });
         quote! {
+            #[derive(Debug, Clone)]
             pub struct #name(binderbinder::binder_object::BinderObjectOrRef);
 
             impl gluon_wire::GluonConvertable for #name {
@@ -216,6 +216,10 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 pub fn from_handler<H: #handler_name>(obj: &std::sync::Arc<binderbinder::binder_object::BinderObject<H>>) -> #name {
                     #name(binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(obj))
                 }
+                #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
+                pub fn from_object_or_ref(obj: binderbinder::binder_object::BinderObjectOrRef) -> #name {
+                    #name(obj)
+                }
             }
             impl binderbinder::binder_object::ToBinderObjectOrRef for #name {
                 fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
@@ -232,7 +236,9 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
 
 pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
     let fields = def.fields.iter().map(gen_field);
-    let name = format_ident!("{}", def.name.to_case(Case::Pascal));
+    let name = def.name.to_case(Case::Pascal);
+    let (derive, name) = derive_from_name(&name);
+    let name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
         let field_names = def
@@ -264,6 +270,7 @@ pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
     };
     quote! {
         #[doc = #doc]
+        #derive
         pub struct #name {
             #(#fields)*
         }
@@ -277,14 +284,23 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
         let fields = variant.fields.iter().map(gen_field);
         let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
         let doc_comment = variant.doc.as_ref().map(|str| quote! {#[doc = #str]});
-        quote! {
-            #doc_comment
-            #name {
-                #(#fields)*
+        if !variant.fields.is_empty() {
+            quote! {
+                #doc_comment
+                #name {
+                    #(#fields)*
+                }
+            }
+        } else {
+            quote! {
+                #doc_comment
+                #name
             }
         }
     });
-    let enum_name = format_ident!("{}", def.name.to_case(Case::Pascal));
+    let name = def.name.to_case(Case::Pascal);
+    let (derive, name) = derive_from_name(&name);
+    let enum_name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
         let write_variants = def.variants.iter().enumerate().map(|(i, variant)| {
@@ -325,11 +341,19 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
             let i = i as u16;
-            quote! {
-                #i => {
-                    #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
-                    #enum_name::#name { #(#field_names,)* }
-                },
+            if !variant.fields.is_empty() {
+                quote! {
+                    #i => {
+                        #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
+                        #enum_name::#name { #(#field_names,)* }
+                    },
+                }
+            } else {
+                quote! {
+                    #i => {
+                        #enum_name::#name
+                    },
+                }
             }
         });
         quote! {
@@ -362,11 +386,39 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
     };
     quote! {
         #[doc = #doc]
+        #derive
         pub enum #enum_name {
             #(#variants),*
         }
 
         #gluon_trait_impl
+    }
+}
+
+fn derive_from_name(name: &str) -> (proc_macro2::TokenStream, &str) {
+    if let Some(str) = name.strip_suffix("CloneHash") {
+        (
+            quote! {
+                #[derive(Clone, Hash, Debug)]
+            },
+            str,
+        )
+    } else if let Some(str) = name.strip_prefix("Clone") {
+        (
+            quote! {
+                #[derive(Clone, Debug)]
+            },
+            str,
+        )
+    } else if let Some(str) = name.strip_prefix("Hash") {
+        (
+            quote! {
+                #[derive(Hash, Debug)]
+            },
+            str,
+        )
+    } else {
+        (quote! {#[derive(Debug)]}, name)
     }
 }
 
