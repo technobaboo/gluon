@@ -80,6 +80,8 @@ pub enum Type {
     Array(Box<Type>, u32),
     Vec(Box<Type>),
     Set(Box<Type>),
+    Option(Box<Type>),
+    Result(Box<Type>, Box<Type>),
     Map(Box<Type>, Box<Type>),
 }
 
@@ -217,6 +219,18 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                     .then_ignore(just(',').padded())
                     .then(p.clone())
                     .map(|(k, v): (Type, Type)| Type::Map(Box::new(k), Box::new(v)))
+                    .delimited_by(just('<'), just('>')),
+            ),
+            just("Option").ignore_then(
+                p.clone()
+                    .map(|t: Type| Type::Option(Box::new(t)))
+                    .delimited_by(just('<'), just('>')),
+            ),
+            just("Result").ignore_then(
+                p.clone()
+                    .then_ignore(just(',').padded())
+                    .then(p.clone())
+                    .map(|(k, v): (Type, Type)| Type::Result(Box::new(k), Box::new(v)))
                     .delimited_by(just('<'), just('>')),
             ),
             p.clone()

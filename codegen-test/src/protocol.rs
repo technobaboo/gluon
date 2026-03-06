@@ -22,7 +22,7 @@ impl gluon_wire::GluonConvertable for Test {
 }
 impl Test {
     pub fn quit(&self) {
-        let builder = gluon_wire::GluonDataBuilder::new();
+        let mut builder = gluon_wire::GluonDataBuilder::new();
         self.0.device().transact_one_way(&self.0, 0u32, builder.to_payload()).unwrap();
     }
     pub async fn ping(&self) -> () {
@@ -169,7 +169,7 @@ impl gluon_wire::GluonConvertable for Test2 {
 }
 impl Test2 {
     pub fn quit(&self) {
-        let builder = gluon_wire::GluonDataBuilder::new();
+        let mut builder = gluon_wire::GluonDataBuilder::new();
         self.0.device().transact_one_way(&self.0, 0u32, builder.to_payload()).unwrap();
     }
     pub async fn ping(&self) -> () {
@@ -302,13 +302,13 @@ pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync +
     }
 }
 ///test struct
-#[derive(Debug)]
-pub struct TestStructClone {
-    string: String,
-    id: u64,
-    binder_ref: Test,
+#[derive(Clone, Debug)]
+pub struct TestStruct {
+    pub string: String,
+    pub id: u64,
+    pub binder_ref: Test,
 }
-impl gluon_wire::GluonConvertable for TestStructClone {
+impl gluon_wire::GluonConvertable for TestStruct {
     fn write<'a, 'b: 'a>(
         &'b self,
         data: &mut gluon_wire::GluonDataBuilder<'a>,
@@ -324,7 +324,7 @@ impl gluon_wire::GluonConvertable for TestStructClone {
         let string = gluon_wire::GluonConvertable::read(data)?;
         let id = gluon_wire::GluonConvertable::read(data)?;
         let binder_ref = gluon_wire::GluonConvertable::read(data)?;
-        Ok(TestStructClone {
+        Ok(TestStruct {
             string,
             id,
             binder_ref,

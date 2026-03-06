@@ -184,7 +184,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 }
                 None => quote! {
                     pub fn #name(&self, #(#params),*) {
-                        let builder = gluon_wire::GluonDataBuilder::new();
+                        let mut builder = gluon_wire::GluonDataBuilder::new();
                         #(#params_write)*
                         self.0.device().transact_one_way(&self.0, #i, builder.to_payload()).unwrap();
                     }
@@ -235,7 +235,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
 }
 
 pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
-    let fields = def.fields.iter().map(gen_field);
+    let fields = def.fields.iter().map(gen_field_struct);
     let name = def.name.to_case(Case::Pascal);
     let (derive, name) = derive_from_name(&name);
     let name = format_ident!("{}", name);
@@ -281,7 +281,7 @@ pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
 
 pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
     let variants = def.variants.iter().map(|variant| {
-        let fields = variant.fields.iter().map(gen_field);
+        let fields = variant.fields.iter().map(gen_field_enum);
         let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
         let doc_comment = variant.doc.as_ref().map(|str| quote! {#[doc = #str]});
         if !variant.fields.is_empty() {
@@ -403,14 +403,14 @@ fn derive_from_name(name: &str) -> (proc_macro2::TokenStream, &str) {
             },
             str,
         )
-    } else if let Some(str) = name.strip_prefix("Clone") {
+    } else if let Some(str) = name.strip_suffix("Clone") {
         (
             quote! {
                 #[derive(Clone, Debug)]
             },
             str,
         )
-    } else if let Some(str) = name.strip_prefix("Hash") {
+    } else if let Some(str) = name.strip_suffix("Hash") {
         (
             quote! {
                 #[derive(Hash, Debug)]
@@ -422,13 +422,22 @@ fn derive_from_name(name: &str) -> (proc_macro2::TokenStream, &str) {
     }
 }
 
-pub fn gen_field(def: &Field) -> proc_macro2::TokenStream {
+pub fn gen_field_enum(def: &Field) -> proc_macro2::TokenStream {
     let type_def = gen_type(&def.ty);
     let name = format_ident!("{}", def.name.to_case(Case::Snake));
     let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
     quote! {
         #doc_comment
         #name: #type_def,
+    }
+}
+pub fn gen_field_struct(def: &Field) -> proc_macro2::TokenStream {
+    let type_def = gen_type(&def.ty);
+    let name = format_ident!("{}", def.name.to_case(Case::Snake));
+    let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
+    quote! {
+        #doc_comment
+        pub #name: #type_def,
     }
 }
 
@@ -479,6 +488,15 @@ pub fn gen_type(def: &Type) -> proc_macro2::TokenStream {
             let key = gen_type(&key);
             let value = gen_type(&value);
             quote! {std::collections::hash::HashMap<#key,#value>}
+        }
+        Type::Option(type_def) => {
+            let type_def = gen_type(&type_def);
+            quote! {Option<#type_def>}
+        }
+        Type::Result(ok, err) => {
+            let ok = gen_type(&ok);
+            let err = gen_type(&err);
+            quote! {Result<#ok, #err>}
         }
     }
 }

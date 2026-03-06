@@ -116,6 +116,8 @@ impl GluonDataBuilder<'_> {
 pub enum GluonWriteError {
     #[error("String is longer than u32::MAX bytes")]
     StringToLong,
+    #[error("List is longer than u32::MAX items")]
+    ListToLong,
 }
 
 impl GluonDataReader {

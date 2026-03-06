@@ -4,6 +4,68 @@ use binderbinder::binder_object::BinderObjectOrRef;
 
 use crate::{GluonConvertable, GluonReadError, GluonWriteError};
 
+impl<T: GluonConvertable> GluonConvertable for Vec<T> {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut crate::GluonDataBuilder<'a>,
+    ) -> Result<(), GluonWriteError> {
+        data.write_u32(
+            self.len()
+                .try_into()
+                .map_err(|_| GluonWriteError::ListToLong)?,
+        )?;
+        for v in self.iter() {
+            v.write(data)?;
+        }
+        Ok(())
+    }
+
+    fn write_owned(self, data: &mut crate::GluonDataBuilder<'_>) -> Result<(), GluonWriteError> {
+        data.write_u32(
+            self.len()
+                .try_into()
+                .map_err(|_| GluonWriteError::ListToLong)?,
+        )?;
+        for v in self.into_iter() {
+            v.write_owned(data)?;
+        }
+        Ok(())
+    }
+
+    fn read(data: &mut crate::GluonDataReader) -> Result<Self, GluonReadError> {
+        let len = data.read_u32()?;
+        let mut out = Vec::with_capacity(len as usize);
+        for _ in 0..len {
+            out.push(T::read(data)?);
+        }
+        Ok(out)
+    }
+}
+impl<T: GluonConvertable> GluonConvertable for Option<T> {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut crate::GluonDataBuilder<'a>,
+    ) -> Result<(), GluonWriteError> {
+        data.write_bool(self.is_some())?;
+        if let Some(v) = self {
+            v.write(data)?;
+        }
+        Ok(())
+    }
+
+    fn write_owned(self, data: &mut crate::GluonDataBuilder<'_>) -> Result<(), GluonWriteError> {
+        data.write_bool(self.is_some())?;
+        if let Some(v) = self {
+            v.write_owned(data)?;
+        }
+        Ok(())
+    }
+
+    fn read(data: &mut crate::GluonDataReader) -> Result<Self, GluonReadError> {
+        data.read_bool()?.then(|| T::read(data)).transpose()
+    }
+}
+
 impl GluonConvertable for BinderObjectOrRef {
     fn write<'a, 'b: 'a>(
         &'b self,
@@ -35,7 +97,6 @@ impl GluonConvertable for OwnedFd {
     fn write_owned(self, data: &mut crate::GluonDataBuilder<'_>) -> Result<(), GluonWriteError> {
         data.write_owned_fd(self)
     }
-
 }
 impl GluonConvertable for String {
     fn write<'a, 'b: 'a>(
