@@ -1,5 +1,5 @@
 use convert_case::{Case, Casing};
-use gluon_binder::idl_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
+use gluon_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
 use quote::{format_ident, quote};
 pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
     let interfaces = proto
@@ -14,6 +14,7 @@ pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
         quote! {use #(#path)::*;}
     });
     quote! {
+        #![allow(unused)]
         use gluon_wire::GluonConvertable;
         #(#imports)*
         #(#interfaces)*

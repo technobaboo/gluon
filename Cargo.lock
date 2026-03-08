@@ -113,8 +113,8 @@ version = "0.1.0"
 dependencies = [
  "binderbinder",
  "convert_case",
- "gluon-binder",
  "gluon-codegen-rust",
+ "gluon-parser",
  "gluon-wire",
  "prettyplease",
  "proc-macro2",
@@ -200,23 +200,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "gluon-binder"
+name = "gluon-codegen-rust"
+version = "0.1.0"
+dependencies = [
+ "convert_case",
+ "gluon-parser",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "gluon-parser"
 version = "0.1.0"
 dependencies = [
  "binderbinder",
  "chumsky",
  "tempfile",
-]
-
-[[package]]
-name = "gluon-codegen-rust"
-version = "0.1.0"
-dependencies = [
- "convert_case",
- "gluon-binder",
- "prettyplease",
- "proc-macro2",
- "quote",
 ]
 
 [[package]]

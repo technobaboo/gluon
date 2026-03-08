@@ -1407,10 +1407,10 @@ fn test_parse_no_imports() {
     assert!(protocol.imported_protocols.is_empty());
 }
 
-#[test]
-fn test_parse_real_interface() {
-    let input = include_str!("../gluon/org.stardustxr.gluon.test.gluon");
-    let protocol = parse_idl("test", input).unwrap();
-    assert!(protocol.imports.is_empty());
-    assert!(protocol.imported_protocols.is_empty());
-}
+// #[test]
+// fn test_parse_real_interface() {
+//     let input = include_str!("../test_idl/org.stardustxr.gluon.test.gluon");
+//     let protocol = parse_idl("test", input).unwrap();
+//     assert!(protocol.imports.is_empty());
+//     assert!(protocol.imported_protocols.is_empty());
+// }

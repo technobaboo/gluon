@@ -4,14 +4,14 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-gluon-binder.workspace = true
-gluon-wire.workspace = true
 binderbinder.workspace = true
+gluon-parser.workspace = true
+gluon-wire.workspace = true
 tokio = "1.49.0"
 
 [build-dependencies]
 gluon-codegen-rust.workspace = true
-gluon-binder.workspace = true
+gluon-parser.workspace = true
 convert_case = "0.11.0"
 prettyplease = "0.2.37"
 proc-macro2 = "1.0.106"
