@@ -1,5 +1,5 @@
-pub mod primitive_impls;
 pub mod drop_tracking;
+pub mod primitive_impls;
 
 use std::{
     os::fd::{BorrowedFd, OwnedFd},
@@ -8,7 +8,7 @@ use std::{
 
 use binderbinder::{
     binder_object::{BinderObjectOrRef, ToBinderObjectOrRef},
-    payload::{PayloadBuilder, PayloadObjectReadError, PayloadPortReadError, PayloadReader},
+    payload::{PayloadBinderRefReadError, PayloadBuilder, PayloadObjectReadError, PayloadReader},
 };
 use thiserror::Error;
 
@@ -166,9 +166,12 @@ impl GluonDataReader {
     }
     pub fn read_binder(&mut self) -> Result<BinderObjectOrRef, GluonReadError> {
         self.payload.read_binder_ref().map_err(|err| match err {
-            PayloadPortReadError::IncorrectObject => GluonReadError::IncorrectPrimitiveType,
-            PayloadPortReadError::UnknownOwnedPort => GluonReadError::UnregisteredBinderObject,
-            PayloadPortReadError::Empty => GluonReadError::NotEnoughBytes,
+            PayloadBinderRefReadError::IncorrectObject => GluonReadError::IncorrectPrimitiveType,
+            PayloadBinderRefReadError::UnknownBinderObject => {
+                GluonReadError::UnregisteredBinderObject
+            }
+            PayloadBinderRefReadError::DeadBinderObject => GluonReadError::DeadBinderObject,
+            PayloadBinderRefReadError::Empty => GluonReadError::NotEnoughBytes,
         })
     }
 }
@@ -273,6 +276,8 @@ pub enum GluonReadError {
     IncorrectPrimitiveType,
     #[error("BinderObject not Registered")]
     UnregisteredBinderObject,
+    #[error("BinderObject dead")]
+    DeadBinderObject,
     #[error("String data is not valid utf8: {0}")]
     StringNotUtf8(#[from] FromUtf8Error),
     #[error("Unkown enum variant: {0}")]
