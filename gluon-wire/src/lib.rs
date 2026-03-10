@@ -1,4 +1,5 @@
 pub mod primitive_impls;
+pub mod drop_tracking;
 
 use std::{
     os::fd::{BorrowedFd, OwnedFd},

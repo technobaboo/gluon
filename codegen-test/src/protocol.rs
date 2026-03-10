@@ -1,34 +1,45 @@
 #![allow(unused)]
 use gluon_wire::GluonConvertable;
 #[derive(Debug, Clone)]
-pub struct Test(binderbinder::binder_object::BinderObjectOrRef);
+pub struct Test {
+    obj: binderbinder::binder_object::BinderObjectOrRef,
+    drop_notification: std::sync::Arc<
+        binderbinder::binder_object::BinderObject<
+            gluon_wire::drop_tracking::DropNotifiedHandler,
+        >,
+    >,
+}
 impl gluon_wire::GluonConvertable for Test {
     fn write<'a, 'b: 'a>(
         &'b self,
         data: &mut gluon_wire::GluonDataBuilder<'a>,
     ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.0.write(data)
+        self.obj.write(data)
     }
     fn read(
         data: &mut gluon_wire::GluonDataReader,
     ) -> Result<Self, gluon_wire::GluonReadError> {
-        Ok(Test(binderbinder::binder_object::BinderObjectOrRef::read(data)?))
+        let obj = binderbinder::binder_object::BinderObjectOrRef::read(data)?;
+        Ok(Test::from_object_or_ref(obj))
     }
     fn write_owned(
         self,
         data: &mut gluon_wire::GluonDataBuilder<'_>,
     ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.0.write_owned(data)
+        self.obj.write_owned(data)
     }
 }
 impl Test {
     pub fn quit(&self) {
         let mut builder = gluon_wire::GluonDataBuilder::new();
-        self.0.device().transact_one_way(&self.0, 8u32, builder.to_payload()).unwrap();
+        self.obj
+            .device()
+            .transact_one_way(&self.obj, 8u32, builder.to_payload())
+            .unwrap();
     }
     pub async fn ping(&self) -> () {
         let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
+            &self.obj,
         );
         tokio::task::spawn_blocking(move || {
                 let mut builder = gluon_wire::GluonDataBuilder::new();
@@ -43,20 +54,18 @@ impl Test {
             .unwrap()
     }
     pub fn ping_blocking(&self) -> () {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
-        );
         let mut builder = gluon_wire::GluonDataBuilder::new();
-        let reader = obj
+        let reader = self
+            .obj
             .device()
-            .transact_blocking(&obj, 9u32, builder.to_payload())
+            .transact_blocking(&self.obj, 9u32, builder.to_payload())
             .unwrap()
             .1;
         let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
     }
     pub async fn echo(&self, input: String) -> String {
         let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
+            &self.obj,
         );
         tokio::task::spawn_blocking(move || {
                 let mut builder = gluon_wire::GluonDataBuilder::new();
@@ -73,14 +82,12 @@ impl Test {
             .unwrap()
     }
     pub fn echo_blocking(&self, input: String) -> String {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
-        );
         let mut builder = gluon_wire::GluonDataBuilder::new();
         input.write(&mut builder).unwrap();
-        let reader = obj
+        let reader = self
+            .obj
             .device()
-            .transact_blocking(&obj, 10u32, builder.to_payload())
+            .transact_blocking(&self.obj, 10u32, builder.to_payload())
             .unwrap()
             .1;
         let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
@@ -88,7 +95,7 @@ impl Test {
     }
     pub async fn echo_ref(&self, input: Test2) -> Test2 {
         let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
+            &self.obj,
         );
         tokio::task::spawn_blocking(move || {
                 let mut builder = gluon_wire::GluonDataBuilder::new();
@@ -105,14 +112,12 @@ impl Test {
             .unwrap()
     }
     pub fn echo_ref_blocking(&self, input: Test2) -> Test2 {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
-        );
         let mut builder = gluon_wire::GluonDataBuilder::new();
         input.write(&mut builder).unwrap();
-        let reader = obj
+        let reader = self
+            .obj
             .device()
-            .transact_blocking(&obj, 11u32, builder.to_payload())
+            .transact_blocking(&self.obj, 11u32, builder.to_payload())
             .unwrap()
             .1;
         let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
@@ -121,7 +126,7 @@ impl Test {
     pub fn from_handler<H: TestHandler>(
         obj: &std::sync::Arc<binderbinder::binder_object::BinderObject<H>>,
     ) -> Test {
-        Test(
+        Test::from_object_or_ref(
             binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
                 obj,
             ),
@@ -131,12 +136,18 @@ impl Test {
     pub fn from_object_or_ref(
         obj: binderbinder::binder_object::BinderObjectOrRef,
     ) -> Test {
-        Test(obj)
+        let drop_notification = obj
+            .device()
+            .register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new());
+        let mut builder = gluon_wire::GluonDataBuilder::new();
+        builder.write_binder(&drop_notification);
+        obj.device().transact_one_way(&obj, 4, builder.to_payload()).unwrap();
+        Test { obj, drop_notification }
     }
 }
 impl binderbinder::binder_object::ToBinderObjectOrRef for Test {
     fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
-        self.0.to_binder_object_or_ref()
+        self.obj.to_binder_object_or_ref()
     }
 }
 pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 'static {
@@ -144,6 +155,10 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
     fn ping(&self) -> impl Future<Output = ()> + Send + Sync;
     fn echo(&self, input: String) -> impl Future<Output = String> + Send + Sync;
     fn echo_ref(&self, input: Test2) -> impl Future<Output = Test2> + Send + Sync;
+    fn drop_notification_requested(
+        &self,
+        notifier: gluon_wire::drop_tracking::DropNotifier,
+    ) -> impl Future<Output = ()> + Send + Sync;
     fn dispatch_two_way(
         &self,
         transaction_code: u32,
@@ -179,6 +194,13 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
     ) -> impl Future<Output = ()> + Send + Sync {
         async move {
             match transaction_code {
+                4 => {
+                    let obj = data.read_binder().unwrap();
+                    self.drop_notification_requested(
+                            gluon_wire::drop_tracking::DropNotifier::new(&obj),
+                        )
+                        .await;
+                }
                 8u32 => {
                     self.quit();
                 }
@@ -188,34 +210,45 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
     }
 }
 #[derive(Debug, Clone)]
-pub struct Test2(binderbinder::binder_object::BinderObjectOrRef);
+pub struct Test2 {
+    obj: binderbinder::binder_object::BinderObjectOrRef,
+    drop_notification: std::sync::Arc<
+        binderbinder::binder_object::BinderObject<
+            gluon_wire::drop_tracking::DropNotifiedHandler,
+        >,
+    >,
+}
 impl gluon_wire::GluonConvertable for Test2 {
     fn write<'a, 'b: 'a>(
         &'b self,
         data: &mut gluon_wire::GluonDataBuilder<'a>,
     ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.0.write(data)
+        self.obj.write(data)
     }
     fn read(
         data: &mut gluon_wire::GluonDataReader,
     ) -> Result<Self, gluon_wire::GluonReadError> {
-        Ok(Test2(binderbinder::binder_object::BinderObjectOrRef::read(data)?))
+        let obj = binderbinder::binder_object::BinderObjectOrRef::read(data)?;
+        Ok(Test2::from_object_or_ref(obj))
     }
     fn write_owned(
         self,
         data: &mut gluon_wire::GluonDataBuilder<'_>,
     ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.0.write_owned(data)
+        self.obj.write_owned(data)
     }
 }
 impl Test2 {
     pub fn quit(&self) {
         let mut builder = gluon_wire::GluonDataBuilder::new();
-        self.0.device().transact_one_way(&self.0, 8u32, builder.to_payload()).unwrap();
+        self.obj
+            .device()
+            .transact_one_way(&self.obj, 8u32, builder.to_payload())
+            .unwrap();
     }
     pub async fn ping(&self) -> () {
         let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
+            &self.obj,
         );
         tokio::task::spawn_blocking(move || {
                 let mut builder = gluon_wire::GluonDataBuilder::new();
@@ -230,20 +263,18 @@ impl Test2 {
             .unwrap()
     }
     pub fn ping_blocking(&self) -> () {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
-        );
         let mut builder = gluon_wire::GluonDataBuilder::new();
-        let reader = obj
+        let reader = self
+            .obj
             .device()
-            .transact_blocking(&obj, 9u32, builder.to_payload())
+            .transact_blocking(&self.obj, 9u32, builder.to_payload())
             .unwrap()
             .1;
         let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
     }
     pub async fn echo(&self, input: String) -> String {
         let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
+            &self.obj,
         );
         tokio::task::spawn_blocking(move || {
                 let mut builder = gluon_wire::GluonDataBuilder::new();
@@ -260,14 +291,12 @@ impl Test2 {
             .unwrap()
     }
     pub fn echo_blocking(&self, input: String) -> String {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
-        );
         let mut builder = gluon_wire::GluonDataBuilder::new();
         input.write(&mut builder).unwrap();
-        let reader = obj
+        let reader = self
+            .obj
             .device()
-            .transact_blocking(&obj, 10u32, builder.to_payload())
+            .transact_blocking(&self.obj, 10u32, builder.to_payload())
             .unwrap()
             .1;
         let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
@@ -278,7 +307,7 @@ impl Test2 {
         input: binderbinder::binder_object::BinderObjectOrRef,
     ) -> binderbinder::binder_object::BinderObjectOrRef {
         let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
+            &self.obj,
         );
         tokio::task::spawn_blocking(move || {
                 let mut builder = gluon_wire::GluonDataBuilder::new();
@@ -298,14 +327,12 @@ impl Test2 {
         &self,
         input: binderbinder::binder_object::BinderObjectOrRef,
     ) -> binderbinder::binder_object::BinderObjectOrRef {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.0,
-        );
         let mut builder = gluon_wire::GluonDataBuilder::new();
         input.write(&mut builder).unwrap();
-        let reader = obj
+        let reader = self
+            .obj
             .device()
-            .transact_blocking(&obj, 11u32, builder.to_payload())
+            .transact_blocking(&self.obj, 11u32, builder.to_payload())
             .unwrap()
             .1;
         let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
@@ -314,7 +341,7 @@ impl Test2 {
     pub fn from_handler<H: Test2Handler>(
         obj: &std::sync::Arc<binderbinder::binder_object::BinderObject<H>>,
     ) -> Test2 {
-        Test2(
+        Test2::from_object_or_ref(
             binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
                 obj,
             ),
@@ -324,12 +351,18 @@ impl Test2 {
     pub fn from_object_or_ref(
         obj: binderbinder::binder_object::BinderObjectOrRef,
     ) -> Test2 {
-        Test2(obj)
+        let drop_notification = obj
+            .device()
+            .register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new());
+        let mut builder = gluon_wire::GluonDataBuilder::new();
+        builder.write_binder(&drop_notification);
+        obj.device().transact_one_way(&obj, 4, builder.to_payload()).unwrap();
+        Test2 { obj, drop_notification }
     }
 }
 impl binderbinder::binder_object::ToBinderObjectOrRef for Test2 {
     fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
-        self.0.to_binder_object_or_ref()
+        self.obj.to_binder_object_or_ref()
     }
 }
 pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync + 'static {
@@ -342,6 +375,10 @@ pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync +
     ) -> impl Future<
         Output = binderbinder::binder_object::BinderObjectOrRef,
     > + Send + Sync;
+    fn drop_notification_requested(
+        &self,
+        notifier: gluon_wire::drop_tracking::DropNotifier,
+    ) -> impl Future<Output = ()> + Send + Sync;
     fn dispatch_two_way(
         &self,
         transaction_code: u32,
@@ -377,6 +414,13 @@ pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync +
     ) -> impl Future<Output = ()> + Send + Sync {
         async move {
             match transaction_code {
+                4 => {
+                    let obj = data.read_binder().unwrap();
+                    self.drop_notification_requested(
+                            gluon_wire::drop_tracking::DropNotifier::new(&obj),
+                        )
+                        .await;
+                }
                 8u32 => {
                     self.quit();
                 }

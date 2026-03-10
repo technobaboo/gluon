@@ -111,6 +111,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
             pub trait #handler_name: binderbinder::device::TransactionHandler + Send + Sync + 'static {
                 #(#methods)*
 
+                fn drop_notification_requested(&self, notifier: gluon_wire::drop_tracking::DropNotifier) -> impl Future<Output=()> + Send + Sync;
                 fn dispatch_two_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=gluon_wire::GluonDataBuilder<'static>> + Send + Sync {
                     async move {
                         let mut out = gluon_wire::GluonDataBuilder::new();
@@ -124,6 +125,10 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 fn dispatch_one_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=()> + Send + Sync {
                     async move {
                         match transaction_code {
+                            4 => {
+                                let obj = data.read_binder().unwrap();
+                                self.drop_notification_requested(gluon_wire::drop_tracking::DropNotifier::new(&obj)).await;
+                            }
                             #(#oneway_methods_dispatch)*
                             _ => {}
                         }
@@ -173,7 +178,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                     let blocking_name = format_ident!("{name}_blocking");
                     quote! {
                         pub async fn #name(&self, #(#params),*) -> #fn_return {
-                            let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(&self.0);
+                            let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(&self.obj);
                             tokio::task::spawn_blocking(move || {
                                 let mut builder = gluon_wire::GluonDataBuilder::new();
                                 #(#params_write)*
@@ -183,10 +188,9 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                             }).await.unwrap()
                         }
                         pub fn #blocking_name(&self, #(#params),*)-> #fn_return {
-                            let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(&self.0);
                             let mut builder = gluon_wire::GluonDataBuilder::new();
                             #(#params_write)*
-                            let reader = obj.device().transact_blocking(&obj, #i, builder.to_payload()).unwrap().1;
+                            let reader = self.obj.device().transact_blocking(&self.obj, #i, builder.to_payload()).unwrap().1;
                             let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
                             #return_tuple
                         }
@@ -196,44 +200,55 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                     pub fn #name(&self, #(#params),*) {
                         let mut builder = gluon_wire::GluonDataBuilder::new();
                         #(#params_write)*
-                        self.0.device().transact_one_way(&self.0, #i, builder.to_payload()).unwrap();
+                        self.obj.device().transact_one_way(&self.obj, #i, builder.to_payload()).unwrap();
                     }
                 },
             }
         });
         quote! {
             #[derive(Debug, Clone)]
-            pub struct #name(binderbinder::binder_object::BinderObjectOrRef);
+            pub struct #name {
+                obj: binderbinder::binder_object::BinderObjectOrRef,
+                drop_notification: std::sync::Arc<binderbinder::binder_object::BinderObject<gluon_wire::drop_tracking::DropNotifiedHandler>>,
+            }
 
             impl gluon_wire::GluonConvertable for #name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
                     data: &mut gluon_wire::GluonDataBuilder<'a>,
                 ) -> Result<(), gluon_wire::GluonWriteError> {
-                    self.0.write(data)
+                    self.obj.write(data)
                 }
 
                 fn read(data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
-                    Ok(#name(binderbinder::binder_object::BinderObjectOrRef::read(data)?))
+                    let obj = binderbinder::binder_object::BinderObjectOrRef::read(data)?;
+                    Ok(#name::from_object_or_ref(obj))
                 }
 
                 fn write_owned(self, data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
-                    self.0.write_owned(data)
+                    self.obj.write_owned(data)
                 }
             }
             impl #name {
                 #(#methods)*
                 pub fn from_handler<H: #handler_name>(obj: &std::sync::Arc<binderbinder::binder_object::BinderObject<H>>) -> #name {
-                    #name(binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(obj))
+                    #name::from_object_or_ref(binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(obj))
                 }
                 #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
                 pub fn from_object_or_ref(obj: binderbinder::binder_object::BinderObjectOrRef) -> #name {
-                    #name(obj)
+                    let drop_notification = obj.device().register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new());
+                    let mut builder = gluon_wire::GluonDataBuilder::new();
+                    builder.write_binder(&drop_notification);
+                    obj.device().transact_one_way(&obj, 4, builder.to_payload()).unwrap();
+                    #name {
+                        obj,
+                        drop_notification,
+                    }
                 }
             }
             impl binderbinder::binder_object::ToBinderObjectOrRef for #name {
                 fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
-                    self.0.to_binder_object_or_ref()
+                    self.obj.to_binder_object_or_ref()
                 }
             }
         }

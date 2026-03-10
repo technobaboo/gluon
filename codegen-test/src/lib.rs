@@ -4,13 +4,16 @@ use std::{
 };
 
 use binderbinder::{TransactionHandler, device::Transaction, payload::PayloadBuilder};
-use gluon_wire::GluonDataReader;
+use gluon_wire::{GluonDataReader, drop_tracking::DropNotifier};
+use tokio::sync::RwLock;
 
 use crate::protocol::TestHandler;
 
 mod protocol;
 #[derive(Debug)]
-struct TestHandlerImpl {}
+struct TestHandlerImpl {
+    drop_notifications: RwLock<Vec<DropNotifier>>,
+}
 
 impl TestHandler for TestHandlerImpl {
     fn quit(&self) {
@@ -34,6 +37,13 @@ impl TestHandler for TestHandlerImpl {
             "Hello World".to_string()
         );
         input
+    }
+
+    async fn drop_notification_requested(
+        &self,
+        notifier: DropNotifier,
+    ) {
+        self.drop_notifications.write().await.push(notifier);
     }
 }
 impl TransactionHandler for TestHandlerImpl {
