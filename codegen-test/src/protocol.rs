@@ -144,6 +144,23 @@ impl Test {
         obj.device().transact_one_way(&obj, 4, builder.to_payload()).unwrap();
         Test { obj, drop_notification }
     }
+    pub async fn death_or_drop(&self) {
+        let weak: Option<&binderbinder::binder_object::WeakBinderRef> = match &self.obj {
+            binderbinder::binder_object::BinderObjectOrRef::Ref(r) => {
+                Some(std::ops::Deref::deref(r))
+            }
+            binderbinder::binder_object::BinderObjectOrRef::WeakRef(r) => Some(r),
+            _ => None,
+        };
+        if let Some(weak) = weak {
+            tokio::select! {
+                _ = weak.death_notification() => {} _ = self.drop_notification.wait() =>
+                {}
+            }
+        } else {
+            self.drop_notification.wait().await;
+        }
+    }
 }
 impl binderbinder::binder_object::ToBinderObjectOrRef for Test {
     fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
@@ -358,6 +375,23 @@ impl Test2 {
         builder.write_binder(&drop_notification);
         obj.device().transact_one_way(&obj, 4, builder.to_payload()).unwrap();
         Test2 { obj, drop_notification }
+    }
+    pub async fn death_or_drop(&self) {
+        let weak: Option<&binderbinder::binder_object::WeakBinderRef> = match &self.obj {
+            binderbinder::binder_object::BinderObjectOrRef::Ref(r) => {
+                Some(std::ops::Deref::deref(r))
+            }
+            binderbinder::binder_object::BinderObjectOrRef::WeakRef(r) => Some(r),
+            _ => None,
+        };
+        if let Some(weak) = weak {
+            tokio::select! {
+                _ = weak.death_notification() => {} _ = self.drop_notification.wait() =>
+                {}
+            }
+        } else {
+            self.drop_notification.wait().await;
+        }
     }
 }
 impl binderbinder::binder_object::ToBinderObjectOrRef for Test2 {

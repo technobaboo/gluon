@@ -245,6 +245,21 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                         drop_notification,
                     }
                 }
+                pub async fn death_or_drop(&self) {
+                    let weak: Option<&binderbinder::binder_object::WeakBinderRef> = match &self.obj {
+                        binderbinder::binder_object::BinderObjectOrRef::Ref(r) => Some(std::ops::Deref::deref(r)),
+                        binderbinder::binder_object::BinderObjectOrRef::WeakRef(r) => Some(r),
+                        _ => None
+                    };
+                    if let Some(weak) = weak {
+                        tokio::select! {
+                            _ = weak.death_notification() => {}
+                            _ = self.drop_notification.wait() => {}
+                        }
+                    } else {
+                        self.drop_notification.wait().await;
+                    }
+                }
             }
             impl binderbinder::binder_object::ToBinderObjectOrRef for #name {
                 fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
