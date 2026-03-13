@@ -1,5 +1,4 @@
 use chumsky::{prelude::*, text::keyword};
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,10 +11,10 @@ pub struct ImportDecl {
 pub struct Protocol {
     pub name: String,
     pub imports: Vec<ImportDecl>,
-    pub imported_protocols: HashMap<String, Protocol>,
-    pub interfaces: HashMap<String, Interface>,
-    pub structs: HashMap<String, StructDef>,
-    pub enums: HashMap<String, EnumDef>,
+    pub imported_protocols: Vec<(String, Protocol)>,
+    pub interfaces: Vec<(String, Interface)>,
+    pub structs: Vec<(String, StructDef)>,
+    pub enums: Vec<(String, EnumDef)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -422,26 +421,26 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         )
         .then_ignore(end())
         .map(|(imports, items)| {
-            let mut interfaces = HashMap::new();
-            let mut structs = HashMap::new();
-            let mut enums = HashMap::new();
+            let mut interfaces = Vec::new();
+            let mut structs = Vec::new();
+            let mut enums = Vec::new();
             for item in items {
                 match item {
                     TopLevel::Interface(name, iface) => {
-                        interfaces.insert(name, iface);
+                        interfaces.push((name, iface));
                     }
                     TopLevel::Struct(s) => {
-                        structs.insert(s.name.clone(), s);
+                        structs.push((s.name.clone(), s));
                     }
                     TopLevel::Enum(e) => {
-                        enums.insert(e.name.clone(), e);
+                        enums.push((e.name.clone(), e));
                     }
                 }
             }
             Protocol {
                 name: "".to_string(),
                 imports,
-                imported_protocols: HashMap::new(),
+                imported_protocols: Vec::new(),
                 interfaces,
                 structs,
                 enums,
@@ -471,8 +470,8 @@ fn test_parse_idl() {
         Protocol {
             name: "Test".to_string(),
             imports: vec![],
-            imported_protocols: HashMap::new(),
-            interfaces: HashMap::from([(
+            imported_protocols: Vec::new(),
+            interfaces: Vec::from([(
                 "Test".to_string(),
                 Interface {
                     doc: "A test interface".to_string(),
@@ -503,8 +502,8 @@ fn test_parse_idl() {
                     ],
                 }
             ),]),
-            structs: HashMap::new(),
-            enums: HashMap::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
         }
     );
 }
@@ -525,7 +524,12 @@ fn test_parse_types() {
         }
     "#;
     let protocol = parse_idl("FileStore", input).unwrap();
-    let iface = &protocol.interfaces["FileStore"];
+    let iface = &protocol
+        .interfaces
+        .iter()
+        .find(|(name, _)| name == "FileStore")
+        .unwrap()
+        .1;
     assert_eq!(iface.methods.len(), 8);
 
     assert_eq!(
@@ -707,7 +711,12 @@ fn test_parse_ref_types() {
         }
     "#;
     let protocol = parse_idl("RefTest", input).unwrap();
-    let iface = &protocol.interfaces["RefTest"];
+    let iface = &protocol
+        .interfaces
+        .iter()
+        .find(|(name, _)| name == "RefTest")
+        .unwrap()
+        .1;
 
     assert_eq!(
         iface.methods[0].returns,
@@ -761,7 +770,12 @@ fn test_parse_struct() {
         }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
-    let s = &protocol.structs["Vec3"];
+    let s = &protocol
+        .structs
+        .iter()
+        .find(|(name, _)| name == "Vec3")
+        .unwrap()
+        .1;
     assert_eq!(s.name, "Vec3");
     assert_eq!(s.doc, "A 3D vector");
     assert_eq!(
@@ -805,7 +819,12 @@ fn test_parse_enum() {
         }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
-    let e = &protocol.enums["Interaction"];
+    let e = &protocol
+        .enums
+        .iter()
+        .find(|(name, _)| name == "Interaction")
+        .unwrap()
+        .1;
     assert_eq!(e.name, "Interaction");
     assert_eq!(e.doc, "Interaction methods");
     assert_eq!(e.variants.len(), 4);
@@ -877,11 +896,21 @@ fn test_parse_mixed() {
     "#;
     let protocol = parse_idl("Test", input).unwrap();
 
-    assert!(protocol.structs.contains_key("Vec3"));
-    assert!(protocol.enums.contains_key("HitResult"));
-    assert!(protocol.interfaces.contains_key("Spatial"));
+    assert!(protocol.structs.iter().any(|(name, _)| name == "Vec3"));
+    assert!(protocol.enums.iter().any(|(name, _)| name == "HitResult"));
+    assert!(
+        protocol
+            .interfaces
+            .iter()
+            .any(|(name, _)| name == "Spatial")
+    );
 
-    let iface = &protocol.interfaces["Spatial"];
+    let iface = &protocol
+        .interfaces
+        .iter()
+        .find(|(name, _)| name == "Spatial")
+        .unwrap()
+        .1;
     assert_eq!(iface.methods.len(), 3);
     assert_eq!(
         iface.methods[0].params,
@@ -908,7 +937,12 @@ fn test_parse_mixed() {
         }])
     );
 
-    let hit = &protocol.enums["HitResult"];
+    let hit = &protocol
+        .enums
+        .iter()
+        .find(|(name, _)| name == "HitResult")
+        .unwrap()
+        .1;
     assert_eq!(
         hit.variants[1].fields[0],
         Field {
@@ -957,15 +991,30 @@ fn test_doc_comments() {
     let protocol = parse_idl("DocTest", input).unwrap();
 
     // Multi-line struct doc
-    let s = &protocol.structs["Vec3"];
+    let s = &protocol
+        .structs
+        .iter()
+        .find(|(name, _)| name == "Vec3")
+        .unwrap()
+        .1;
     assert_eq!(s.doc, "Position in 3D space\nwith x, y, z components");
 
     // Enum doc
-    let e = &protocol.enums["InputType"];
+    let e = &protocol
+        .enums
+        .iter()
+        .find(|(name, _)| name == "InputType")
+        .unwrap()
+        .1;
     assert_eq!(e.doc, "Input interaction type");
 
     // Interface doc
-    let iface = &protocol.interfaces["Node"];
+    let iface = &protocol
+        .interfaces
+        .iter()
+        .find(|(name, _)| name == "Node")
+        .unwrap()
+        .1;
     assert_eq!(iface.doc, "Spatial node");
 }
 
@@ -1000,7 +1049,12 @@ fn test_field_and_variant_docs() {
     "#;
     let protocol = parse_idl("Test", input).unwrap();
 
-    let s = &protocol.structs["Color"];
+    let s = &protocol
+        .structs
+        .iter()
+        .find(|(name, _)| name == "Color")
+        .unwrap()
+        .1;
     assert_eq!(
         s.fields[0],
         Field {
@@ -1034,7 +1088,12 @@ fn test_field_and_variant_docs() {
         }
     ); // no doc
 
-    let e = &protocol.enums["Paint"];
+    let e = &protocol
+        .enums
+        .iter()
+        .find(|(name, _)| name == "Paint")
+        .unwrap()
+        .1;
     assert_eq!(e.variants[0].name, "None");
     assert_eq!(e.variants[0].doc, Some("No paint".to_string()));
     assert_eq!(e.variants[1].name, "Solid");
@@ -1068,15 +1127,15 @@ fn test_missing_required_doc() {
 
 /// Load a `.gluon` protocol file from disk, recursively resolving imports.
 pub fn load_protocol(path: &Path) -> Result<Protocol, LoadError> {
-    let mut seen = HashSet::new();
-    let mut cache = HashMap::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut cache = std::collections::HashMap::new();
     load_protocol_inner(path, &mut seen, &mut cache)
 }
 
 fn load_protocol_inner(
     path: &Path,
-    seen: &mut HashSet<PathBuf>,
-    cache: &mut HashMap<PathBuf, Protocol>,
+    seen: &mut std::collections::HashSet<PathBuf>,
+    cache: &mut std::collections::HashMap<PathBuf, Protocol>,
 ) -> Result<Protocol, LoadError> {
     let canonical = path.canonicalize().map_err(LoadError::Io)?;
 
@@ -1095,13 +1154,14 @@ fn load_protocol_inner(
         LoadError::Parse(msgs.join("; "))
     })?;
 
+    // TODO: this seems to be unused?
     // Check for duplicate aliases
-    let mut alias_set = HashSet::new();
-    for import in &protocol.imports {
-        if !alias_set.insert(import.alias.clone()) {
-            return Err(LoadError::DuplicateAlias(import.alias.clone()));
-        }
-    }
+    // let mut alias_set = std::collections::HashSet::new();
+    // for import in &protocol.imports {
+    //     if !alias_set.insert(import.alias.clone()) {
+    //         return Err(LoadError::DuplicateAlias(import.alias.clone()));
+    //     }
+    // }
 
     // Resolve imports
     let parent_dir = canonical.parent().unwrap_or(Path::new("."));
@@ -1110,7 +1170,7 @@ fn load_protocol_inner(
         let imported = load_protocol_inner(&import_path, seen, cache)?;
         protocol
             .imported_protocols
-            .insert(import.alias.clone(), imported);
+            .push((import.alias.clone(), imported));
     }
 
     seen.remove(&canonical);
@@ -1158,7 +1218,12 @@ fn test_parse_qualified_type_in_params() {
         }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
-    let iface = &protocol.interfaces["Foo"];
+    let iface = &protocol
+        .interfaces
+        .iter()
+        .find(|(name, _)| name == "Foo")
+        .unwrap()
+        .1;
     assert_eq!(
         iface.methods[0].params[0].ty,
         Type::Qualified("spatial".into(), "Vec3".into())
@@ -1183,7 +1248,12 @@ fn test_parse_qualified_type_in_containers() {
         }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
-    let iface = &protocol.interfaces["Foo"];
+    let iface = &protocol
+        .interfaces
+        .iter()
+        .find(|(name, _)| name == "Foo")
+        .unwrap()
+        .1;
 
     assert_eq!(
         iface.methods[0].returns.as_ref().unwrap()[0].ty,
@@ -1221,7 +1291,12 @@ fn test_parse_qualified_type_in_struct() {
         }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
-    let s = &protocol.structs["Transform"];
+    let s = &protocol
+        .structs
+        .iter()
+        .find(|(name, _)| name == "Transform")
+        .unwrap()
+        .1;
     assert_eq!(
         s.fields[0].ty,
         Type::Qualified("spatial".into(), "Vec3".into())
@@ -1246,7 +1321,12 @@ fn test_parse_qualified_type_in_enum() {
         }
     "#;
     let protocol = parse_idl("Test", input).unwrap();
-    let e = &protocol.enums["HitResult"];
+    let e = &protocol
+        .enums
+        .iter()
+        .find(|(name, _)| name == "HitResult")
+        .unwrap()
+        .1;
     assert_eq!(
         e.variants[1].fields[0].ty,
         Type::Qualified("spatial".into(), "Vec3".into())
@@ -1279,12 +1359,27 @@ fn test_load_protocol_basic() {
     let protocol = load_protocol(&main_path).unwrap();
     assert_eq!(protocol.imports.len(), 1);
     assert_eq!(protocol.imports[0].alias, "spatial");
-    assert!(protocol.imported_protocols.contains_key("spatial"));
+    assert!(
+        protocol
+            .imported_protocols
+            .iter()
+            .any(|(name, _)| name == "spatial")
+    );
 
-    let spatial = &protocol.imported_protocols["spatial"];
-    assert!(spatial.structs.contains_key("Vec3"));
+    let spatial = &protocol
+        .imported_protocols
+        .iter()
+        .find(|(name, _)| name == "spatial")
+        .unwrap()
+        .1;
+    assert!(spatial.structs.iter().any(|(name, _)| name == "Vec3"));
 
-    let iface = &protocol.interfaces["Main"];
+    let iface = &protocol
+        .interfaces
+        .iter()
+        .find(|(name, _)| name == "Main")
+        .unwrap()
+        .1;
     assert_eq!(
         iface.methods[0].params[0].ty,
         Type::Qualified("spatial".into(), "Vec3".into())
@@ -1384,14 +1479,42 @@ fn test_load_protocol_diamond_import() {
     write!(f, "import \"a.gluon\"\nimport \"b.gluon\"\n\n/// Main\ninterface Main {{\n    ping() -> ()\n}}\n").unwrap();
 
     let protocol = load_protocol(&main_path).unwrap();
-    assert!(protocol.imported_protocols.contains_key("a"));
-    assert!(protocol.imported_protocols.contains_key("b"));
+    assert!(
+        protocol
+            .imported_protocols
+            .iter()
+            .any(|(name, _)| name == "a")
+    );
+    assert!(
+        protocol
+            .imported_protocols
+            .iter()
+            .any(|(name, _)| name == "b")
+    );
 
     // Both a and b should have resolved their shared import
-    let a = &protocol.imported_protocols["a"];
-    assert!(a.imported_protocols.contains_key("shared"));
-    let b = &protocol.imported_protocols["b"];
-    assert!(b.imported_protocols.contains_key("shared"));
+    let a = &protocol
+        .imported_protocols
+        .iter()
+        .find(|(name, _)| name == "a")
+        .unwrap()
+        .1;
+    assert!(
+        a.imported_protocols
+            .iter()
+            .any(|(name, _)| name == "shared")
+    );
+    let b = &protocol
+        .imported_protocols
+        .iter()
+        .find(|(name, _)| name == "b")
+        .unwrap()
+        .1;
+    assert!(
+        b.imported_protocols
+            .iter()
+            .any(|(name, _)| name == "shared")
+    );
 }
 
 #[test]
