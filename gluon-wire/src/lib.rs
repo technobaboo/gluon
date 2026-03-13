@@ -283,3 +283,13 @@ pub enum GluonReadError {
     #[error("Unkown enum variant: {0}")]
     UnknownEnumVariant(u16),
 }
+
+#[derive(Debug, Error)]
+pub enum GluonSendError {
+    #[error("Failed to write Parameters: {0}")]
+    ParamWriteError(#[from] GluonWriteError),
+    #[error("Failed to read return values: {0}")]
+    ReturnReadError(#[from] GluonReadError),
+    #[error("Transaction error: {0}")]
+    TransactionError(#[from] binderbinder::error::Error),
+}

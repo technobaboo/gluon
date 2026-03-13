@@ -36,7 +36,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 let params = method
                     .params
                     .iter()
-                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data).unwrap()});
+                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data)?});
                 let name = format_ident!("{}", method.name.to_case(Case::Snake));
                 let return_names = method
                     .returns
@@ -50,7 +50,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                     #i => {
                         let (#(#return_names),*) = self.#name(#(#params),*).await;
                         #(
-                            #return_names.write_owned(&mut out).unwrap();
+                            #return_names.write_owned(&mut out)?;
                         )*
                     },
                 }
@@ -65,7 +65,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 let params = method
                     .params
                     .iter()
-                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data).unwrap()});
+                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data)?});
                 let name = format_ident!("{}", method.name.to_case(Case::Snake));
                 let i = i as u32;
                 quote! {
@@ -112,26 +112,27 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 #(#methods)*
 
                 fn drop_notification_requested(&self, notifier: gluon_wire::drop_tracking::DropNotifier) -> impl Future<Output=()> + Send + Sync;
-                fn dispatch_two_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=gluon_wire::GluonDataBuilder<'static>> + Send + Sync {
+                fn dispatch_two_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         let mut out = gluon_wire::GluonDataBuilder::new();
                         match transaction_code {
                             #(#methods_dispatch)*
                             _ => {}
                         }
-                        out
+                        Ok(out)
                     }
                 }
-                fn dispatch_one_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=()> + Send + Sync {
+                fn dispatch_one_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         match transaction_code {
                             4 => {
-                                let obj = data.read_binder().unwrap();
+                                let Ok(obj) = data.read_binder() else { return Ok(()); };
                                 self.drop_notification_requested(gluon_wire::drop_tracking::DropNotifier::new(&obj)).await;
                             }
                             #(#oneway_methods_dispatch)*
                             _ => {}
                         }
+                        Ok(())
                     }
                 }
             }
@@ -148,7 +149,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
             }).collect::<Vec<_>>();
             let params_write = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! {#name.write(&mut builder).unwrap();}
+                quote! {#name.write(&mut builder)?;}
             }).collect::<Vec<_>>();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             // TODO: gen return docs and names into main fn docs?
@@ -166,41 +167,42 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                         types => quote! {(#(#types),*)},
                     };
                     let return_tuple = match types.as_slice() {
-                        [] => quote! {},
-                        [_] => quote! {gluon_wire::GluonConvertable::read(&mut reader).unwrap()},
+                        [] => quote! {()},
+                        [_] => quote! {gluon_wire::GluonConvertable::read(&mut reader)?},
                         types => {
                             let types = types
                                 .iter()
-                                .map(|_| quote! {gluon_wire::GluonConvertable::read(&mut reader).unwrap()});
+                                .map(|_| quote! {gluon_wire::GluonConvertable::read(&mut reader)?});
                             quote! {(#(#types),*)}
                         }
                     };
                     let blocking_name = format_ident!("{name}_blocking");
                     quote! {
-                        pub async fn #name(&self, #(#params),*) -> #fn_return {
+                        pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
                             let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(&self.obj);
                             tokio::task::spawn_blocking(move || {
                                 let mut builder = gluon_wire::GluonDataBuilder::new();
                                 #(#params_write)*
-                                let reader = obj.device().transact_blocking(&obj, #i, builder.to_payload()).unwrap().1;
+                                let reader = obj.device().transact_blocking(&obj, #i, builder.to_payload())?.1;
                                 let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
-                                #return_tuple
+                                Ok(#return_tuple)
                             }).await.unwrap()
                         }
-                        pub fn #blocking_name(&self, #(#params),*)-> #fn_return {
+                        pub fn #blocking_name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
                             let mut builder = gluon_wire::GluonDataBuilder::new();
                             #(#params_write)*
-                            let reader = self.obj.device().transact_blocking(&self.obj, #i, builder.to_payload()).unwrap().1;
+                            let reader = self.obj.device().transact_blocking(&self.obj, #i, builder.to_payload())?.1;
                             let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
-                            #return_tuple
+                            Ok(#return_tuple)
                         }
                     }
                 }
                 None => quote! {
-                    pub fn #name(&self, #(#params),*) {
+                    pub fn #name(&self, #(#params),*) -> Result<(), gluon_wire::GluonSendError> {
                         let mut builder = gluon_wire::GluonDataBuilder::new();
                         #(#params_write)*
-                        self.obj.device().transact_one_way(&self.obj, #i, builder.to_payload()).unwrap();
+                        self.obj.device().transact_one_way(&self.obj, #i, builder.to_payload())?;
+                        Ok(())
                     }
                 },
             }
@@ -239,7 +241,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                     let drop_notification = obj.device().register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new());
                     let mut builder = gluon_wire::GluonDataBuilder::new();
                     builder.write_binder(&drop_notification);
-                    obj.device().transact_one_way(&obj, 4, builder.to_payload()).unwrap();
+                    _ = obj.device().transact_one_way(&obj, 4, builder.to_payload());
                     #name {
                         obj,
                         drop_notification,
