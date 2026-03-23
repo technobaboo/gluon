@@ -48,7 +48,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 let i = i as u32;
                 quote! {
                     #i => {
-                        let (#(#return_names),*) = self.#name(#(#params),*).await;
+                        let (#(#return_names),*) = self.#name(ctx, #(#params),*).await;
                         #(
                             #return_names.write_owned(&mut out)?;
                         )*
@@ -70,7 +70,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 let i = i as u32;
                 quote! {
                     #i => {
-                        self.#name(#(#params),*);
+                        self.#name(ctx, #(#params),*);
                     },
                 }
             });
@@ -104,7 +104,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 }
             };
             quote! {
-                fn #name(&self, #(#params),*) #fn_return;
+                fn #name(&self, _ctx: gluon_wire::GluonCtx, #(#params),*) #fn_return;
             }
         });
         quote! {
@@ -112,7 +112,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 #(#methods)*
 
                 fn drop_notification_requested(&self, notifier: gluon_wire::drop_tracking::DropNotifier) -> impl Future<Output=()> + Send + Sync;
-                fn dispatch_two_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_two_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         let mut out = gluon_wire::GluonDataBuilder::new();
                         match transaction_code {
@@ -122,7 +122,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                         Ok(out)
                     }
                 }
-                fn dispatch_one_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_one_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         match transaction_code {
                             4 => {

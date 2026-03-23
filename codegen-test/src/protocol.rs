@@ -178,10 +178,18 @@ impl binderbinder::binder_object::ToBinderObjectOrRef for Test {
     }
 }
 pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 'static {
-    fn quit(&self);
-    fn ping(&self) -> impl Future<Output = ()> + Send + Sync;
-    fn echo(&self, input: String) -> impl Future<Output = String> + Send + Sync;
-    fn echo_ref(&self, input: Test2) -> impl Future<Output = Test2> + Send + Sync;
+    fn quit(&self, _ctx: gluon_wire::GluonCtx);
+    fn ping(&self, _ctx: gluon_wire::GluonCtx) -> impl Future<Output = ()> + Send + Sync;
+    fn echo(
+        &self,
+        _ctx: gluon_wire::GluonCtx,
+        input: String,
+    ) -> impl Future<Output = String> + Send + Sync;
+    fn echo_ref(
+        &self,
+        _ctx: gluon_wire::GluonCtx,
+        input: Test2,
+    ) -> impl Future<Output = Test2> + Send + Sync;
     fn drop_notification_requested(
         &self,
         notifier: gluon_wire::drop_tracking::DropNotifier,
@@ -190,6 +198,7 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
         &self,
         transaction_code: u32,
         data: &mut gluon_wire::GluonDataReader,
+        ctx: gluon_wire::GluonCtx,
     ) -> impl Future<
         Output = Result<
             gluon_wire::GluonDataBuilder<'static>,
@@ -200,17 +209,17 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
             let mut out = gluon_wire::GluonDataBuilder::new();
             match transaction_code {
                 9u32 => {
-                    let () = self.ping().await;
+                    let () = self.ping(ctx).await;
                 }
                 10u32 => {
                     let (output) = self
-                        .echo(gluon_wire::GluonConvertable::read(data)?)
+                        .echo(ctx, gluon_wire::GluonConvertable::read(data)?)
                         .await;
                     output.write_owned(&mut out)?;
                 }
                 11u32 => {
                     let (output) = self
-                        .echo_ref(gluon_wire::GluonConvertable::read(data)?)
+                        .echo_ref(ctx, gluon_wire::GluonConvertable::read(data)?)
                         .await;
                     output.write_owned(&mut out)?;
                 }
@@ -223,6 +232,7 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
         &self,
         transaction_code: u32,
         data: &mut gluon_wire::GluonDataReader,
+        ctx: gluon_wire::GluonCtx,
     ) -> impl Future<Output = Result<(), gluon_wire::GluonSendError>> + Send + Sync {
         async move {
             match transaction_code {
@@ -236,7 +246,7 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
                         .await;
                 }
                 8u32 => {
-                    self.quit();
+                    self.quit(ctx);
                 }
                 _ => {}
             }
@@ -428,11 +438,16 @@ impl binderbinder::binder_object::ToBinderObjectOrRef for Test2 {
     }
 }
 pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync + 'static {
-    fn quit(&self);
-    fn ping(&self) -> impl Future<Output = ()> + Send + Sync;
-    fn echo(&self, input: String) -> impl Future<Output = String> + Send + Sync;
+    fn quit(&self, _ctx: gluon_wire::GluonCtx);
+    fn ping(&self, _ctx: gluon_wire::GluonCtx) -> impl Future<Output = ()> + Send + Sync;
+    fn echo(
+        &self,
+        _ctx: gluon_wire::GluonCtx,
+        input: String,
+    ) -> impl Future<Output = String> + Send + Sync;
     fn echo_ref(
         &self,
+        _ctx: gluon_wire::GluonCtx,
         input: binderbinder::binder_object::BinderObjectOrRef,
     ) -> impl Future<
         Output = binderbinder::binder_object::BinderObjectOrRef,
@@ -445,6 +460,7 @@ pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync +
         &self,
         transaction_code: u32,
         data: &mut gluon_wire::GluonDataReader,
+        ctx: gluon_wire::GluonCtx,
     ) -> impl Future<
         Output = Result<
             gluon_wire::GluonDataBuilder<'static>,
@@ -455,17 +471,17 @@ pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync +
             let mut out = gluon_wire::GluonDataBuilder::new();
             match transaction_code {
                 9u32 => {
-                    let () = self.ping().await;
+                    let () = self.ping(ctx).await;
                 }
                 10u32 => {
                     let (output) = self
-                        .echo(gluon_wire::GluonConvertable::read(data)?)
+                        .echo(ctx, gluon_wire::GluonConvertable::read(data)?)
                         .await;
                     output.write_owned(&mut out)?;
                 }
                 11u32 => {
                     let (output) = self
-                        .echo_ref(gluon_wire::GluonConvertable::read(data)?)
+                        .echo_ref(ctx, gluon_wire::GluonConvertable::read(data)?)
                         .await;
                     output.write_owned(&mut out)?;
                 }
@@ -478,6 +494,7 @@ pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync +
         &self,
         transaction_code: u32,
         data: &mut gluon_wire::GluonDataReader,
+        ctx: gluon_wire::GluonCtx,
     ) -> impl Future<Output = Result<(), gluon_wire::GluonSendError>> + Send + Sync {
         async move {
             match transaction_code {
@@ -491,7 +508,7 @@ pub trait Test2Handler: binderbinder::device::TransactionHandler + Send + Sync +
                         .await;
                 }
                 8u32 => {
-                    self.quit();
+                    self.quit(ctx);
                 }
                 _ => {}
             }

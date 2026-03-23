@@ -10,6 +10,7 @@ use binderbinder::{
     binder_object::{BinderObjectOrRef, ToBinderObjectOrRef},
     payload::{PayloadBinderRefReadError, PayloadBuilder, PayloadObjectReadError, PayloadReader},
 };
+use rustix::process::{RawPid, RawUid};
 use thiserror::Error;
 
 pub struct GluonDataBuilder<'a> {
@@ -292,4 +293,10 @@ pub enum GluonSendError {
     ReturnReadError(#[from] GluonReadError),
     #[error("Transaction error: {0}")]
     TransactionError(#[from] binderbinder::error::Error),
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct GluonCtx {
+    pub sender_pid: RawPid,
+    pub sender_euid: RawUid,
 }

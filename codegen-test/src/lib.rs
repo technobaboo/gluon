@@ -4,7 +4,7 @@ use std::{
 };
 
 use binderbinder::{TransactionHandler, device::Transaction, payload::PayloadBuilder};
-use gluon_wire::{GluonDataReader, drop_tracking::DropNotifier};
+use gluon_wire::{GluonCtx, GluonDataReader, drop_tracking::DropNotifier};
 use tokio::sync::RwLock;
 
 use crate::protocol::TestHandler;
@@ -16,46 +16,60 @@ struct TestHandlerImpl {
 }
 
 impl TestHandler for TestHandlerImpl {
-    fn quit(&self) {
+    fn quit(&self, _ctx: GluonCtx) {
         process::exit(0);
     }
 
-    async fn ping(&self) {
+    async fn ping(&self, _ctx: GluonCtx) {
         println!("got ping");
         let mut hasher = DefaultHasher::new();
         c"nya~".to_owned().hash(&mut hasher);
     }
 
-    async fn echo(&self, input: String) -> String {
+    async fn echo(&self, _ctx: GluonCtx, input: String) -> String {
         println!("echoing: {input}");
         input
     }
 
-    async fn echo_ref(&self, input: protocol::Test2) -> protocol::Test2 {
+    async fn echo_ref(&self, _ctx: GluonCtx, input: protocol::Test2) -> protocol::Test2 {
         assert_eq!(
-            input.echo("Hello World".to_string()).await,
+            input.echo("Hello World".to_string()).await.unwrap(),
             "Hello World".to_string()
         );
         input
     }
 
-    async fn drop_notification_requested(
-        &self,
-        notifier: DropNotifier,
-    ) {
+    async fn drop_notification_requested(&self, notifier: DropNotifier) {
         self.drop_notifications.write().await.push(notifier);
     }
 }
 impl TransactionHandler for TestHandlerImpl {
     async fn handle(&self, transaction: Transaction) -> PayloadBuilder<'_> {
         let mut reader = GluonDataReader::from_payload(transaction.payload);
-        self.dispatch_two_way(transaction.code, &mut reader)
-            .await
-            .to_payload()
+        self.dispatch_two_way(
+            transaction.code,
+            &mut reader,
+            GluonCtx {
+                sender_pid: transaction.sender_pid,
+                sender_euid: transaction.sender_euid,
+            },
+        )
+        .await
+        .unwrap()
+        .to_payload()
     }
 
     async fn handle_one_way(&self, transaction: Transaction) {
         let mut reader = GluonDataReader::from_payload(transaction.payload);
-        self.dispatch_one_way(transaction.code, &mut reader).await
+        self.dispatch_one_way(
+            transaction.code,
+            &mut reader,
+            GluonCtx {
+                sender_pid: transaction.sender_pid,
+                sender_euid: transaction.sender_euid,
+            },
+        )
+        .await
+        .unwrap()
     }
 }
