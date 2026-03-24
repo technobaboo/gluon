@@ -1,6 +1,9 @@
 use convert_case::{Case, Casing};
 use gluon_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
 use quote::{format_ident, quote};
+
+pub mod helpers;
+
 pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
     let interfaces = proto
         .interfaces
