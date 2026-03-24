@@ -1,5 +1,111 @@
 #![allow(unused, clippy::single_match, clippy::match_single_binding)]
 use gluon_wire::GluonConvertable;
+///test struct
+#[derive(Clone, Debug)]
+pub struct TestStruct {
+    pub string: String,
+    pub id: u64,
+    pub binder_ref: Test,
+}
+impl gluon_wire::GluonConvertable for TestStruct {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut gluon_wire::GluonDataBuilder<'a>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        self.string.write(data)?;
+        self.id.write(data)?;
+        self.binder_ref.write(data)?;
+        Ok(())
+    }
+    fn read(
+        data: &mut gluon_wire::GluonDataReader,
+    ) -> Result<Self, gluon_wire::GluonReadError> {
+        let string = gluon_wire::GluonConvertable::read(data)?;
+        let id = gluon_wire::GluonConvertable::read(data)?;
+        let binder_ref = gluon_wire::GluonConvertable::read(data)?;
+        Ok(TestStruct {
+            string,
+            id,
+            binder_ref,
+        })
+    }
+    fn write_owned(
+        self,
+        data: &mut gluon_wire::GluonDataBuilder<'_>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        self.string.write_owned(data)?;
+        self.id.write_owned(data)?;
+        self.binder_ref.write_owned(data)?;
+        Ok(())
+    }
+}
+///Test enum
+#[derive(Debug)]
+pub enum TestEnum {
+    TestStruct { test_struct: TestStruct },
+    Fd { fd: std::os::fd::OwnedFd },
+    EmptyVariant,
+}
+impl gluon_wire::GluonConvertable for TestEnum {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut gluon_wire::GluonDataBuilder<'a>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        match self {
+            TestEnum::TestStruct { test_struct } => {
+                data.write_u16(0u16)?;
+                test_struct.write(data)?;
+            }
+            TestEnum::Fd { fd } => {
+                data.write_u16(1u16)?;
+                fd.write(data)?;
+            }
+            TestEnum::EmptyVariant => {
+                data.write_u16(2u16)?;
+            }
+        };
+        Ok(())
+    }
+    fn read(
+        data: &mut gluon_wire::GluonDataReader,
+    ) -> Result<Self, gluon_wire::GluonReadError> {
+        Ok(
+            match data.read_u16()? {
+                0u16 => {
+                    let test_struct = gluon_wire::GluonConvertable::read(data)?;
+                    TestEnum::TestStruct {
+                        test_struct,
+                    }
+                }
+                1u16 => {
+                    let fd = gluon_wire::GluonConvertable::read(data)?;
+                    TestEnum::Fd { fd }
+                }
+                2u16 => TestEnum::EmptyVariant,
+                v => return Err(gluon_wire::GluonReadError::UnknownEnumVariant(v)),
+            },
+        )
+    }
+    fn write_owned(
+        self,
+        data: &mut gluon_wire::GluonDataBuilder<'_>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        match self {
+            TestEnum::TestStruct { test_struct } => {
+                data.write_u16(0u16)?;
+                test_struct.write_owned(data)?;
+            }
+            TestEnum::Fd { fd } => {
+                data.write_u16(1u16)?;
+                fd.write_owned(data)?;
+            }
+            TestEnum::EmptyVariant => {
+                data.write_u16(2u16)?;
+            }
+        };
+        Ok(())
+    }
+}
 #[derive(Debug, Clone)]
 pub struct Test {
     obj: binderbinder::binder_object::BinderObjectOrRef,
@@ -252,111 +358,5 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
             }
             Ok(())
         }
-    }
-}
-///test struct
-#[derive(Clone, Debug)]
-pub struct TestStruct {
-    pub string: String,
-    pub id: u64,
-    pub binder_ref: Test,
-}
-impl gluon_wire::GluonConvertable for TestStruct {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        data: &mut gluon_wire::GluonDataBuilder<'a>,
-    ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.string.write(data)?;
-        self.id.write(data)?;
-        self.binder_ref.write(data)?;
-        Ok(())
-    }
-    fn read(
-        data: &mut gluon_wire::GluonDataReader,
-    ) -> Result<Self, gluon_wire::GluonReadError> {
-        let string = gluon_wire::GluonConvertable::read(data)?;
-        let id = gluon_wire::GluonConvertable::read(data)?;
-        let binder_ref = gluon_wire::GluonConvertable::read(data)?;
-        Ok(TestStruct {
-            string,
-            id,
-            binder_ref,
-        })
-    }
-    fn write_owned(
-        self,
-        data: &mut gluon_wire::GluonDataBuilder<'_>,
-    ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.string.write_owned(data)?;
-        self.id.write_owned(data)?;
-        self.binder_ref.write_owned(data)?;
-        Ok(())
-    }
-}
-///Test enum
-#[derive(Debug)]
-pub enum TestEnum {
-    TestStruct { test_struct: TestStruct },
-    Fd { fd: std::os::fd::OwnedFd },
-    EmptyVariant,
-}
-impl gluon_wire::GluonConvertable for TestEnum {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        data: &mut gluon_wire::GluonDataBuilder<'a>,
-    ) -> Result<(), gluon_wire::GluonWriteError> {
-        match self {
-            TestEnum::TestStruct { test_struct } => {
-                data.write_u16(0u16)?;
-                test_struct.write(data)?;
-            }
-            TestEnum::Fd { fd } => {
-                data.write_u16(1u16)?;
-                fd.write(data)?;
-            }
-            TestEnum::EmptyVariant => {
-                data.write_u16(2u16)?;
-            }
-        };
-        Ok(())
-    }
-    fn read(
-        data: &mut gluon_wire::GluonDataReader,
-    ) -> Result<Self, gluon_wire::GluonReadError> {
-        Ok(
-            match data.read_u16()? {
-                0u16 => {
-                    let test_struct = gluon_wire::GluonConvertable::read(data)?;
-                    TestEnum::TestStruct {
-                        test_struct,
-                    }
-                }
-                1u16 => {
-                    let fd = gluon_wire::GluonConvertable::read(data)?;
-                    TestEnum::Fd { fd }
-                }
-                2u16 => TestEnum::EmptyVariant,
-                v => return Err(gluon_wire::GluonReadError::UnknownEnumVariant(v)),
-            },
-        )
-    }
-    fn write_owned(
-        self,
-        data: &mut gluon_wire::GluonDataBuilder<'_>,
-    ) -> Result<(), gluon_wire::GluonWriteError> {
-        match self {
-            TestEnum::TestStruct { test_struct } => {
-                data.write_u16(0u16)?;
-                test_struct.write_owned(data)?;
-            }
-            TestEnum::Fd { fd } => {
-                data.write_u16(1u16)?;
-                fd.write_owned(data)?;
-            }
-            TestEnum::EmptyVariant => {
-                data.write_u16(2u16)?;
-            }
-        };
-        Ok(())
     }
 }

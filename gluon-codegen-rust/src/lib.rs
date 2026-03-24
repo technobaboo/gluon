@@ -17,9 +17,9 @@ pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
         #![allow(unused, clippy::single_match, clippy::match_single_binding)]
         use gluon_wire::GluonConvertable;
         #(#imports)*
-        #(#interfaces)*
         #(#structs)*
         #(#enums)*
+        #(#interfaces)*
     }
 }
 pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::TokenStream {
