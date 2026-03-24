@@ -1,7 +1,7 @@
 
 [workspace]
 resolver = "3"
-members = ["codegen-test","gluon-codegen-rust", "gluon-wire"]
+members = ["codegen-test", "codegen-rust", "parser", "wire"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,11 @@ edition = "2024"
 [workspace.dependencies]
 # binderbinder = { path = "../binderbinder" }
 binderbinder.git = "https://github.com/technobaboo/binderbinder"
-gluon-codegen-rust.path = "./gluon-codegen-rust"
-gluon-parser.path = "./gluon-parser"
-gluon-wire.path = "./gluon-wire"
+gluon-codegen-rust.path = "./codegen-rust"
+gluon-parser.path = "./parser"
+gluon-wire.path = "./wire"
+
+[package]
+name = "gluon"
+version.workspace = true
+edition.workspace = true

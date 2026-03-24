@@ -200,6 +200,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "gluon"
+version = "0.1.0"
+
+[[package]]
 name = "gluon-codegen-rust"
 version = "0.1.0"
 dependencies = [
