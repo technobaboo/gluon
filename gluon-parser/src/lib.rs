@@ -52,6 +52,7 @@ pub struct Interface {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Method {
     pub name: String,
+    pub doc: Option<String>,
     pub params: Vec<Field>,
     /// if none, this is a oneway function.
     /// if some but vec is empty, this is a void function.
@@ -388,11 +389,14 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
 
     // --- Method ---
     let method_name = text::ident().map(str::to_string).labelled("method");
-    let method = method_name
+    let method = opt_doc_block
+        .padded_by(ws)
+        .then(method_name)
         .then(params.clone())
         .then(returns)
-        .map(|((name, params), returns)| Method {
+        .map(|(((doc, name), params), returns)| Method {
             name,
+            doc,
             params,
             returns,
         });
@@ -568,16 +572,19 @@ fn test_parse_idl() {
                     methods: vec![
                         Method {
                             name: "quit".to_string(),
+                            doc: None,
                             params: vec![],
                             returns: None,
                         },
                         Method {
                             name: "ping".to_string(),
+                            doc: None,
                             params: vec![],
                             returns: Some(vec![]),
                         },
                         Method {
                             name: "echo".to_string(),
+                            doc: None,
                             params: vec![Field {
                                 name: "input".to_string(),
                                 ty: Type::String,
@@ -1204,6 +1211,134 @@ fn test_field_and_variant_docs() {
             name: "start".to_string(),
             ty: Type::Named("Color".into()),
             doc: None
+        }
+    );
+}
+
+#[test]
+fn test_mixed_doc_comments() {
+    let input = r#"
+        /// A point in space
+        struct Point {
+            /// X coordinate
+            x: f32,
+            y: f32,
+            /// Z coordinate
+            z: f32,
+        }
+
+        /// Shape types
+        enum Shape {
+            /// Nothing to render
+            None,
+            Circle {
+                radius: f32,
+            },
+            /// A rectangle shape
+            Rect {
+                /// Width of the rectangle
+                width: f32,
+                height: f32,
+            },
+        }
+
+        /// Drawing interface
+        interface Canvas {
+            /// Clear the canvas
+            clear()
+            reset()
+            /// Draw a shape at a position
+            /// with the given color
+            draw(pos: Point, shape: Shape) -> (id: u32)
+            remove(id: u32) -> ()
+        }
+    "#;
+    assert_eq!(
+        parse_idl("Test", input).unwrap(),
+        Protocol {
+            name: "Test".to_string(),
+            imports: vec![],
+            imported_protocols: vec![],
+            structs: vec![(
+                "Point".to_string(),
+                StructDef {
+                    name: "Point".to_string(),
+                    doc: "A point in space".to_string(),
+                    fields: vec![
+                        Field { name: "x".to_string(), ty: Type::F32, doc: Some("X coordinate".to_string()) },
+                        Field { name: "y".to_string(), ty: Type::F32, doc: None },
+                        Field { name: "z".to_string(), ty: Type::F32, doc: Some("Z coordinate".to_string()) },
+                    ],
+                },
+            )],
+            enums: vec![(
+                "Shape".to_string(),
+                EnumDef {
+                    name: "Shape".to_string(),
+                    doc: "Shape types".to_string(),
+                    variants: vec![
+                        EnumVariant {
+                            name: "None".to_string(),
+                            doc: Some("Nothing to render".to_string()),
+                            fields: vec![],
+                        },
+                        EnumVariant {
+                            name: "Circle".to_string(),
+                            doc: None,
+                            fields: vec![
+                                Field { name: "radius".to_string(), ty: Type::F32, doc: None },
+                            ],
+                        },
+                        EnumVariant {
+                            name: "Rect".to_string(),
+                            doc: Some("A rectangle shape".to_string()),
+                            fields: vec![
+                                Field { name: "width".to_string(), ty: Type::F32, doc: Some("Width of the rectangle".to_string()) },
+                                Field { name: "height".to_string(), ty: Type::F32, doc: None },
+                            ],
+                        },
+                    ],
+                },
+            )],
+            interfaces: vec![(
+                "Canvas".to_string(),
+                Interface {
+                    doc: "Drawing interface".to_string(),
+                    methods: vec![
+                        Method {
+                            name: "clear".to_string(),
+                            doc: Some("Clear the canvas".to_string()),
+                            params: vec![],
+                            returns: None,
+                        },
+                        Method {
+                            name: "reset".to_string(),
+                            doc: None,
+                            params: vec![],
+                            returns: None,
+                        },
+                        Method {
+                            name: "draw".to_string(),
+                            doc: Some("Draw a shape at a position\nwith the given color".to_string()),
+                            params: vec![
+                                Field { name: "pos".to_string(), ty: Type::Named("Point".into()), doc: None },
+                                Field { name: "shape".to_string(), ty: Type::Named("Shape".into()), doc: None },
+                            ],
+                            returns: Some(vec![
+                                Field { name: "id".to_string(), ty: Type::U32, doc: None },
+                            ]),
+                        },
+                        Method {
+                            name: "remove".to_string(),
+                            doc: None,
+                            params: vec![
+                                Field { name: "id".to_string(), ty: Type::U32, doc: None },
+                            ],
+                            returns: Some(vec![]),
+                        },
+                    ],
+                },
+            )],
         }
     );
 }

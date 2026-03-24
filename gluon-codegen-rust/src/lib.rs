@@ -83,6 +83,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 }
             });
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
+            let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
             // TODO: gen return docs and names into main fn docs?
             let return_types = method
                 .returns
@@ -104,6 +105,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 }
             };
             quote! {
+                #doc_comment
                 fn #name(&self, _ctx: gluon_wire::GluonCtx, #(#params),*) #fn_return;
             }
         });
@@ -152,13 +154,12 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 quote! {#name.write(&mut builder)?;}
             }).collect::<Vec<_>>();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
-            // TODO: gen return docs and names into main fn docs?
+            let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
             let return_types = method
                 .returns
                 .as_ref()
                 .map(|v| v.iter().map(|v| gen_type(&v.ty)).collect::<Vec<_>>());
             let i = i as u32 + 8;
-            // TODO: doc string on method
             match return_types {
                 Some(types) => {
                     let fn_return = match types.as_slice() {
@@ -178,6 +179,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                     };
                     let blocking_name = format_ident!("{name}_blocking");
                     quote! {
+                        #doc_comment
                         pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
                             let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(&self.obj);
                             tokio::task::spawn_blocking(move || {
@@ -198,6 +200,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                     }
                 }
                 None => quote! {
+                    #doc_comment
                     pub fn #name(&self, #(#params),*) -> Result<(), gluon_wire::GluonSendError> {
                         let mut builder = gluon_wire::GluonDataBuilder::new();
                         #(#params_write)*
