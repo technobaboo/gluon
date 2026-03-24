@@ -14,7 +14,7 @@ pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
         quote! {use #(#path)::*;}
     });
     quote! {
-        #![allow(unused)]
+        #![allow(unused, clippy::single_match)]
         use gluon_wire::GluonConvertable;
         #(#imports)*
         #(#interfaces)*
