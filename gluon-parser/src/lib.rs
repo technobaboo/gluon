@@ -412,9 +412,10 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                 .padded_by(ws)
                 .ignore_then(text::ident().map(str::to_string))
                 .then(
-                    methods
-                        .delimited_by(just('{'), just('}'))
-                        .padded_by(ws),
+                    just('{')
+                        .padded_by(ws)
+                        .ignore_then(methods)
+                        .then_ignore(just('}').padded_by(ws)),
                 ),
         )
         .map(|(doc, (name, methods))| (name, Interface { doc, methods }));
@@ -1772,3 +1773,30 @@ fn test_parse_no_imports() {
 //     assert!(protocol.imports.is_empty());
 //     assert!(protocol.imported_protocols.is_empty());
 // }
+
+#[test]
+fn test_empty_interface() {
+    let input = r#"
+        /// An empty interface
+        interface Empty {
+        }
+    "#;
+    let protocol = parse_idl("Empty", input).unwrap();
+    assert_eq!(
+        protocol,
+        Protocol {
+            name: "Empty".to_string(),
+            imports: vec![],
+            imported_protocols: Vec::new(),
+            interfaces: Vec::from([(
+                "Empty".to_string(),
+                Interface {
+                    doc: "An empty interface".to_string(),
+                    methods: vec![],
+                },
+            )]),
+            structs: Vec::new(),
+            enums: Vec::new(),
+        }
+    );
+}
