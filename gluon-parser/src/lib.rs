@@ -1154,14 +1154,13 @@ fn load_protocol_inner(
         LoadError::Parse(msgs.join("; "))
     })?;
 
-    // TODO: this seems to be unused?
     // Check for duplicate aliases
-    // let mut alias_set = std::collections::HashSet::new();
-    // for import in &protocol.imports {
-    //     if !alias_set.insert(import.alias.clone()) {
-    //         return Err(LoadError::DuplicateAlias(import.alias.clone()));
-    //     }
-    // }
+    let mut alias_set = std::collections::HashSet::new();
+    for import in &protocol.imports {
+        if !alias_set.insert(import.alias.clone()) {
+            return Err(LoadError::DuplicateAlias(import.alias.clone()));
+        }
+    }
 
     // Resolve imports
     let parent_dir = canonical.parent().unwrap_or(Path::new("."));
