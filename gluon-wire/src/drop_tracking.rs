@@ -21,7 +21,7 @@ impl Drop for DropNotifier {
             .transact_one_way(&self.0, 4, PayloadBuilder::new());
     }
 }
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct DropNotifiedHandler {
     notify: Notify,
 }

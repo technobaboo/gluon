@@ -5,8 +5,7 @@ use std::fs;
 const PROTO: &str = include_str!("./gluon-binder-src/org.stardustxr.gluon.test.gluon");
 fn main() {
     println!(
-        "cargo:rerun-if-changed={}",
-        "./gluon-binder-src/org.stardustxr.gluon.test.gluon"
+        "cargo:rerun-if-changed=./gluon-binder-src/org.stardustxr.gluon.test.gluon"
     );
     println!("cargo:rerun-if-changed=../gluon-codegen-rust/src/lib.rs");
     let proto = parse_idl("Test", PROTO).unwrap();

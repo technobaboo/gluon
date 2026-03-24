@@ -88,7 +88,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
                 .returns
                 .as_ref()
                 .map(|v| v.iter().map(|v| gen_type(&v.ty)).collect::<Vec<_>>());
-            let fn_return = match return_types.as_ref().map(|v| v.as_slice()) {
+            let fn_return = match return_types.as_deref() {
                 None => {
                     quote! {}
                 }
@@ -356,11 +356,19 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
             let i = i as u16;
-            quote! {
-                #enum_name::#name { #(#field_names),* } => {
-                    data.write_u16(#i)?;
-                    #(#field_names.write(data)?;)*
-                },
+            if field_names.is_empty() {
+                quote! {
+                    #enum_name::#name => {
+                        data.write_u16(#i)?;
+                    },
+                }
+            } else {
+                quote! {
+                    #enum_name::#name { #(#field_names),* } => {
+                        data.write_u16(#i)?;
+                        #(#field_names.write(data)?;)*
+                    },
+                }
             }
         });
         let write_owned_variants = def.variants.iter().enumerate().map(|(i, variant)| {
@@ -371,11 +379,19 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
             let i = i as u16;
-            quote! {
-                #enum_name::#name { #(#field_names),* } => {
-                    data.write_u16(#i)?;
-                    #(#field_names.write_owned(data)?;)*
-                },
+            if field_names.is_empty() {
+                quote! {
+                    #enum_name::#name => {
+                        data.write_u16(#i)?;
+                    },
+                }
+            } else {
+                quote! {
+                    #enum_name::#name { #(#field_names),* } => {
+                        data.write_u16(#i)?;
+                        #(#field_names.write_owned(data)?;)*
+                    },
+                }
             }
         });
         let read_variants = def.variants.iter().enumerate().map(|(i, variant)| {
@@ -386,17 +402,17 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
             let i = i as u16;
-            if !variant.fields.is_empty() {
+            if variant.fields.is_empty() {
                 quote! {
                     #i => {
-                        #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
-                        #enum_name::#name { #(#field_names,)* }
+                        #enum_name::#name
                     },
                 }
             } else {
                 quote! {
                     #i => {
-                        #enum_name::#name
+                        #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
+                        #enum_name::#name { #(#field_names,)* }
                     },
                 }
             }
@@ -518,29 +534,29 @@ pub fn gen_type(def: &Type) -> proc_macro2::TokenStream {
             quote! {#space::#name}
         }
         Type::Array(type_def, len) => {
-            let type_def = gen_type(&type_def);
+            let type_def = gen_type(type_def);
             quote! {[#type_def; #len]}
         }
         Type::Vec(type_def) => {
-            let type_def = gen_type(&type_def);
+            let type_def = gen_type(type_def);
             quote! {Vec<#type_def>}
         }
         Type::Set(type_def) => {
-            let type_def = gen_type(&type_def);
+            let type_def = gen_type(type_def);
             quote! {std::collections::hash::HashSet<#type_def>}
         }
         Type::Map(key, value) => {
-            let key = gen_type(&key);
-            let value = gen_type(&value);
+            let key = gen_type(key);
+            let value = gen_type(value);
             quote! {std::collections::hash::HashMap<#key,#value>}
         }
         Type::Option(type_def) => {
-            let type_def = gen_type(&type_def);
+            let type_def = gen_type(type_def);
             quote! {Option<#type_def>}
         }
         Type::Result(ok, err) => {
-            let ok = gen_type(&ok);
-            let err = gen_type(&err);
+            let ok = gen_type(ok);
+            let err = gen_type(err);
             quote! {Result<#ok, #err>}
         }
     }

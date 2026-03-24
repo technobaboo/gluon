@@ -104,7 +104,11 @@ impl std::fmt::Display for ParseErrorEntry {
         } else {
             self.expected.join(", ")
         };
-        write!(f, "{}:{}: found {}, expected {expected}", self.line, self.col, self.found)
+        write!(
+            f,
+            "{}:{}: found {}, expected {expected}",
+            self.line, self.col, self.found
+        )
     }
 }
 
@@ -169,8 +173,8 @@ fn rich_to_entry(src: &str, err: &Rich<'_, char>) -> ParseErrorEntry {
             let s = format!("{e}");
             // Filter out whitespace/comment internals leaked by the ws parser
             match s.as_str() {
-                "' '" | "'\t'" | "'\n'" | "'\r'" | "'/' " | "'/'"
-                | "something else" | "inline whitespace" => None,
+                "' '" | "'\t'" | "'\n'" | "'\r'" | "'/' " | "'/'" | "something else"
+                | "inline whitespace" => None,
                 // Clean up double-quoted keywords like '"import"' → 'import'
                 other => Some(
                     other
@@ -230,11 +234,11 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         .delimited_by(just('"'), just('"'));
 
     let import_stmt = keyword("import")
-        .padded_by(ws.clone())
+        .padded_by(ws)
         .ignore_then(import_path)
         .then(
             keyword("as")
-                .padded_by(ws.clone())
+                .padded_by(ws)
                 .ignore_then(text::ident().map(str::to_string))
                 .or_not(),
         )
@@ -244,7 +248,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         });
 
     let imports = import_stmt
-        .padded_by(ws.clone())
+        .padded_by(ws)
         .repeated()
         .collect::<Vec<ImportDecl>>();
 
@@ -260,23 +264,19 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         .then_ignore(text::newline().or(end()));
 
     let req_doc_block = doc_line
-        .clone()
         .repeated()
         .at_least(1)
         .collect::<Vec<String>>()
         .map(|lines| lines.join("\n"))
         .labelled("doc comment (/// ...)");
 
-    let opt_doc_block = doc_line
-        .repeated()
-        .collect::<Vec<String>>()
-        .map(|lines| {
-            if lines.is_empty() {
-                None
-            } else {
-                Some(lines.join("\n"))
-            }
-        });
+    let opt_doc_block = doc_line.repeated().collect::<Vec<String>>().map(|lines| {
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n"))
+        }
+    });
 
     // --- Type ---
     let type_parser = recursive(|p| {
@@ -306,7 +306,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             ),
             just("Map").ignore_then(
                 p.clone()
-                    .then_ignore(just(',').padded_by(ws.clone()))
+                    .then_ignore(just(',').padded_by(ws))
                     .then(p.clone())
                     .map(|(k, v): (Type, Type)| Type::Map(Box::new(k), Box::new(v)))
                     .delimited_by(just('<'), just('>')),
@@ -318,13 +318,13 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             ),
             just("Result").ignore_then(
                 p.clone()
-                    .then_ignore(just(',').padded_by(ws.clone()))
+                    .then_ignore(just(',').padded_by(ws))
                     .then(p.clone())
                     .map(|(k, v): (Type, Type)| Type::Result(Box::new(k), Box::new(v)))
                     .delimited_by(just('<'), just('>')),
             ),
             p.clone()
-                .then_ignore(just(';').padded_by(ws.clone()))
+                .then_ignore(just(';').padded_by(ws))
                 .then(text::int(10).map(|s: &str| s.parse::<u32>().unwrap()))
                 .map(|(t, n): (Type, u32)| Type::Array(Box::new(t), n))
                 .delimited_by(just('['), just(']')),
@@ -358,14 +358,14 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                     None => Type::Named(first),
                 }),
         ))
-        .padded_by(ws.clone())
+        .padded_by(ws)
         .labelled("type")
     });
 
     // --- Params ---
     let param = text::ident()
         .map(str::to_string)
-        .then_ignore(just(':').padded_by(ws.clone()))
+        .then_ignore(just(':').padded_by(ws))
         .then(type_parser.clone())
         .map(|(name, ty)| Field {
             name,
@@ -374,12 +374,15 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         });
 
     let params = param
-        .separated_by(just(',').padded_by(ws.clone()))
+        .separated_by(just(',').padded_by(ws))
         .collect::<Vec<Field>>()
-        .delimited_by(just('(').padded_by(ws.clone()), just(')').padded_by(ws.clone()));
+        .delimited_by(
+            just('(').padded_by(ws),
+            just(')').padded_by(ws),
+        );
 
     let returns = just("->")
-        .padded_by(ws.clone())
+        .padded_by(ws)
         .ignore_then(params.clone())
         .or_not();
 
@@ -394,52 +397,49 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             returns,
         });
     let methods = method
-        .padded_by(ws.clone())
+        .padded_by(ws)
         .repeated()
         .collect::<Vec<Method>>();
 
     // --- Interface ---
     let interface = req_doc_block
-        .clone()
         .then(
             keyword("interface")
-                .padded_by(ws.clone())
+                .padded_by(ws)
                 .ignore_then(text::ident().map(str::to_string))
                 .then(
                     methods
                         .delimited_by(just('{'), just('}'))
-                        .padded_by(ws.clone()),
+                        .padded_by(ws),
                 ),
         )
         .map(|(doc, (name, methods))| (name, Interface { doc, methods }));
 
     // --- Struct ---
     let struct_field = opt_doc_block
-        .clone()
-        .padded_by(ws.clone())
+        .padded_by(ws)
         .then(
             text::ident()
                 .map(str::to_string)
-                .then_ignore(just(':').padded_by(ws.clone()))
+                .then_ignore(just(':').padded_by(ws))
                 .then(type_parser.clone()),
         )
         .map(|(doc, (name, ty))| Field { name, ty, doc });
     let struct_fields = struct_field
-        .separated_by(just(',').padded_by(ws.clone()))
+        .separated_by(just(',').padded_by(ws))
         .allow_trailing()
         .collect::<Vec<Field>>();
 
     let struct_def = req_doc_block
-        .clone()
         .then(
             keyword("struct")
-                .padded_by(ws.clone())
+                .padded_by(ws)
                 .ignore_then(text::ident().map(str::to_string))
                 .then(
                     struct_fields
                         .clone()
                         .delimited_by(just('{'), just('}'))
-                        .padded_by(ws.clone()),
+                        .padded_by(ws),
                 ),
         )
         .map(|(doc, (name, fields))| StructDef { name, doc, fields });
@@ -448,13 +448,13 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
     let variant_fields = struct_fields
         .clone()
         .delimited_by(just('{'), just('}'))
-        .padded_by(ws.clone());
+        .padded_by(ws);
     let enum_variant = opt_doc_block
-        .padded_by(ws.clone())
+        .padded_by(ws)
         .then(
             text::ident()
                 .map(str::to_string)
-                .padded_by(ws.clone())
+                .padded_by(ws)
                 .then(variant_fields.or_not()),
         )
         .map(|(doc, (name, fields))| EnumVariant {
@@ -463,19 +463,19 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             fields: fields.unwrap_or_default(),
         });
     let enum_variants = enum_variant
-        .separated_by(just(',').padded_by(ws.clone()))
+        .separated_by(just(',').padded_by(ws))
         .allow_trailing()
         .collect::<Vec<EnumVariant>>();
 
     let enum_def = req_doc_block
         .then(
             keyword("enum")
-                .padded_by(ws.clone())
+                .padded_by(ws)
                 .ignore_then(text::ident().map(str::to_string))
                 .then(
                     enum_variants
                         .delimited_by(just('{'), just('}'))
-                        .padded_by(ws.clone()),
+                        .padded_by(ws),
                 ),
         )
         .map(|(doc, (name, variants))| EnumDef {
@@ -534,11 +534,12 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
 }
 
 pub fn parse_idl(name: &str, input: &str) -> Result<Protocol, ParseError> {
-    let mut protocol = parser().parse(input).into_result().map_err(|errs| {
-        ParseError {
+    let mut protocol = parser()
+        .parse(input)
+        .into_result()
+        .map_err(|errs| ParseError {
             errors: errs.iter().map(|e| rich_to_entry(input, e)).collect(),
-        }
-    })?;
+        })?;
     protocol.name = name.to_string();
     Ok(protocol)
 }

@@ -20,6 +20,11 @@ pub struct GluonDataBuilder<'a> {
 pub struct GluonDataReader {
     payload: PayloadReader,
 }
+impl<'a> Default for GluonDataBuilder<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl<'a> GluonDataBuilder<'a> {
     pub fn new() -> Self {
         Self {

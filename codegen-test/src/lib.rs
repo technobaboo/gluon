@@ -1,15 +1,15 @@
+use crate::protocol::TestHandler;
+use binderbinder::{TransactionHandler, device::Transaction, payload::PayloadBuilder};
+use gluon_wire::{GluonCtx, GluonDataReader, drop_tracking::DropNotifier};
 use std::{
     hash::{DefaultHasher, Hash},
     process,
 };
-
-use binderbinder::{TransactionHandler, device::Transaction, payload::PayloadBuilder};
-use gluon_wire::{GluonCtx, GluonDataReader, drop_tracking::DropNotifier};
 use tokio::sync::RwLock;
 
-use crate::protocol::TestHandler;
-
 mod protocol;
+
+#[allow(unused)]
 #[derive(Debug)]
 struct TestHandlerImpl {
     drop_notifications: RwLock<Vec<DropNotifier>>,
@@ -26,16 +26,12 @@ impl TestHandler for TestHandlerImpl {
         c"nya~".to_owned().hash(&mut hasher);
     }
 
-    async fn echo(&self, _ctx: GluonCtx, input: String) -> String {
-        println!("echoing: {input}");
+    async fn echo(&self, _ctx: GluonCtx, input: protocol::TestEnum) -> protocol::TestEnum {
+        println!("echoing: {input:?}");
         input
     }
 
-    async fn echo_ref(&self, _ctx: GluonCtx, input: protocol::Test2) -> protocol::Test2 {
-        assert_eq!(
-            input.echo("Hello World".to_string()).await.unwrap(),
-            "Hello World".to_string()
-        );
+    async fn echo_ref(&self, _ctx: GluonCtx, input: protocol::Test) -> protocol::Test {
         input
     }
 

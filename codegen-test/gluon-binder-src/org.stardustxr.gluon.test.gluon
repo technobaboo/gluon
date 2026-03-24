@@ -4,9 +4,9 @@ interface Test {
 
 	ping() -> ()
 
-	echo(input: String) -> (output: String)
+	echo(input: TestEnum) -> (output: TestEnum)
 
-	echo_ref(input: Ref<Test2>) -> (output: Ref<Test2>)
+	echo_ref(input: Ref<Test>) -> (output: Ref<Test>)
 }
 
 /// test struct
@@ -18,22 +18,11 @@ struct TestStructClone {
 
 /// Test enum
 enum TestEnum {
-	StringVariant {
-		string: String,
+	TestStruct {
+		test_struct: TestStruct,
 	},
 	Fd {
 		fd: Fd,
 	},
-	EmptyVairant
-}
-
-/// Test2 interface
-interface Test2 {
-	quit()
-
-	ping() -> ()
-
-	echo(input: String) -> (output: String)
-
-	echo_ref(input: Ref) -> (output: Ref)
+	EmptyVariant
 }
