@@ -84,10 +84,48 @@ pub enum Type {
     Map(Box<Type>, Box<Type>),
 }
 
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    pub errors: Vec<ParseErrorEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParseErrorEntry {
+    pub line: usize,
+    pub col: usize,
+    pub found: String,
+    pub expected: Vec<String>,
+}
+
+impl std::fmt::Display for ParseErrorEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let expected = if self.expected.is_empty() {
+            "something else".to_string()
+        } else {
+            self.expected.join(", ")
+        };
+        write!(f, "{}:{}: found {}, expected {expected}", self.line, self.col, self.found)
+    }
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, entry) in self.errors.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{entry}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 #[derive(Debug)]
 pub enum LoadError {
     Io(std::io::Error),
-    Parse(String),
+    Parse(ParseError),
     CyclicImport(PathBuf),
     DuplicateAlias(String),
 }
@@ -96,7 +134,7 @@ impl std::fmt::Display for LoadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LoadError::Io(e) => write!(f, "IO error: {e}"),
-            LoadError::Parse(e) => write!(f, "Parse error: {e}"),
+            LoadError::Parse(e) => write!(f, "Parse error:\n{e}"),
             LoadError::CyclicImport(p) => write!(f, "Cyclic import: {}", p.display()),
             LoadError::DuplicateAlias(a) => write!(f, "Duplicate import alias: {a}"),
         }
@@ -104,6 +142,60 @@ impl std::fmt::Display for LoadError {
 }
 
 impl std::error::Error for LoadError {}
+
+/// Convert a byte offset in `src` to a (line, col) pair (both 1-based).
+fn offset_to_line_col(src: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut col = 1;
+    for (i, ch) in src.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn rich_to_entry(src: &str, err: &Rich<'_, char>) -> ParseErrorEntry {
+    let (line, col) = offset_to_line_col(src, err.span().start);
+    let expected: Vec<String> = err
+        .expected()
+        .filter_map(|e| {
+            let s = format!("{e}");
+            // Filter out whitespace/comment internals leaked by the ws parser
+            match s.as_str() {
+                "' '" | "'\t'" | "'\n'" | "'\r'" | "'/' " | "'/'"
+                | "something else" | "inline whitespace" => None,
+                // Clean up double-quoted keywords like '"import"' → 'import'
+                other => Some(
+                    other
+                        .strip_prefix("'\"")
+                        .and_then(|s| s.strip_suffix("\"'"))
+                        .map(|s| format!("'{s}'"))
+                        .unwrap_or_else(|| s),
+                ),
+            }
+        })
+        .collect();
+    ParseErrorEntry {
+        line,
+        col,
+        found: err
+            .found()
+            .map(|c| match c {
+                '\n' => "newline".to_string(),
+                '\t' => "tab".to_string(),
+                c => format!("'{c}'"),
+            })
+            .unwrap_or_else(|| "end of input".to_string()),
+        expected,
+    }
+}
 
 /// Derive the default alias from an import path.
 /// Takes the filename, strips `.gluon`, splits by `.`, and takes the last segment.
@@ -441,8 +533,12 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
         })
 }
 
-pub fn parse_idl<'src>(name: &str, input: &'src str) -> Result<Protocol, Vec<Rich<'src, char>>> {
-    let mut protocol = parser().parse(input).into_result()?;
+pub fn parse_idl(name: &str, input: &str) -> Result<Protocol, ParseError> {
+    let mut protocol = parser().parse(input).into_result().map_err(|errs| {
+        ParseError {
+            errors: errs.iter().map(|e| rich_to_entry(input, e)).collect(),
+        }
+    })?;
     protocol.name = name.to_string();
     Ok(protocol)
 }
@@ -1118,6 +1214,20 @@ fn test_missing_required_doc() {
     assert!(parse_idl("Test", "interface Baz { ping() -> () }").is_err());
 }
 
+#[test]
+fn test_error_display() {
+    let cases = &[
+        ("missing doc", "struct Foo { x: u32 }"),
+        ("bad token", "/// doc\ninterface Foo {\n  123bad\n}"),
+        ("unclosed brace", "/// doc\nstruct Foo {\n  x: u32,\n"),
+        ("bad type", "/// doc\nstruct Foo {\n  x: ???,\n}"),
+    ];
+    for (label, input) in cases {
+        let err = parse_idl("Test", input).unwrap_err();
+        println!("--- {label} ---\n{err}\n");
+    }
+}
+
 /// Load a `.gluon` protocol file from disk, recursively resolving imports.
 pub fn load_protocol(path: &Path) -> Result<Protocol, LoadError> {
     let mut seen = std::collections::HashSet::new();
@@ -1142,10 +1252,7 @@ fn load_protocol_inner(
 
     let source = std::fs::read_to_string(&canonical).map_err(LoadError::Io)?;
     let name = default_alias(canonical.to_str().unwrap_or(""));
-    let mut protocol = parse_idl(&name, &source).map_err(|errs| {
-        let msgs: Vec<String> = errs.iter().map(|e| format!("{e}")).collect();
-        LoadError::Parse(msgs.join("; "))
-    })?;
+    let mut protocol = parse_idl(&name, &source).map_err(LoadError::Parse)?;
 
     // Check for duplicate aliases
     let mut alias_set = std::collections::HashSet::new();
