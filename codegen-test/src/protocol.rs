@@ -1,4 +1,4 @@
-#![allow(unused, clippy::single_match)]
+#![allow(unused, clippy::single_match, clippy::match_single_binding)]
 use gluon_wire::GluonConvertable;
 #[derive(Debug, Clone)]
 pub struct Test {
