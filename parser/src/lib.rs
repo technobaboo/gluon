@@ -99,10 +99,16 @@ pub struct ParseErrorEntry {
     pub expected: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ParseError {
     pub file: String,
     pub errors: Vec<ParseErrorEntry>,
+}
+
+impl std::fmt::Debug for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "\n{self}")
+    }
 }
 
 impl std::fmt::Display for ParseError {
