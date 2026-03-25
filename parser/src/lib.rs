@@ -60,6 +60,12 @@ pub struct Method {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CustomType {
+    Named(String),
+    Qualified(String, String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Bool,
     U8,
@@ -74,9 +80,8 @@ pub enum Type {
     F64,
     String,
     Fd,
-    Ref(Option<String>),       // binder object reference
-    Named(String),             // reference to a struct or enum by name
-    Qualified(String, String), // namespace::TypeName from an import
+    Ref(Option<CustomType>),   // binder object reference, optionally typed
+    Custom(CustomType),        // reference to a struct, enum, or imported type by name
     Array(Box<Type>, u32),
     Vec(Box<Type>),
     Set(Box<Type>),
@@ -343,12 +348,11 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                                 .or_not(),
                         )
                         .map(|(first, second)| match second {
-                            Some(name) => Some(format!("{first}::{name}")),
-                            None => Some(first),
+                            Some(name) => CustomType::Qualified(first, name),
+                            None => CustomType::Named(first),
                         })
                         .delimited_by(just('<'), just('>'))
-                        .or_not()
-                        .map(|opt| opt.flatten()),
+                        .or_not(),
                 )
                 .map(|(_, name)| Type::Ref(name)),
             text::ident()
@@ -359,8 +363,8 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                         .or_not(),
                 )
                 .map(|(first, second)| match second {
-                    Some(name) => Type::Qualified(first, name),
-                    None => Type::Named(first),
+                    Some(name) => Type::Custom(CustomType::Qualified(first, name)),
+                    None => Type::Custom(CustomType::Named(first)),
                 }),
         ))
         .padded_by(ws)
@@ -824,7 +828,7 @@ fn test_parse_ref_types() {
         iface.methods[1].returns,
         Some(vec![Field {
             name: "display".to_string(),
-            ty: Type::Ref(Some("Display".into())),
+            ty: Type::Ref(Some(CustomType::Named("Display".into()))),
             doc: None
         }])
     );
@@ -838,7 +842,7 @@ fn test_parse_ref_types() {
             },
             Field {
                 name: "iface".to_string(),
-                ty: Type::Ref(Some("Compositor".into())),
+                ty: Type::Ref(Some(CustomType::Named("Compositor".into()))),
                 doc: None
             },
         ]
@@ -1010,7 +1014,7 @@ fn test_parse_mixed() {
         iface.methods[0].params,
         vec![Field {
             name: "position".to_string(),
-            ty: Type::Named("Vec3".into()),
+            ty: Type::Custom(CustomType::Named("Vec3".into())),
             doc: None
         }]
     );
@@ -1018,7 +1022,7 @@ fn test_parse_mixed() {
         iface.methods[1].returns,
         Some(vec![Field {
             name: "hit".to_string(),
-            ty: Type::Named("HitResult".into()),
+            ty: Type::Custom(CustomType::Named("HitResult".into())),
             doc: None
         }])
     );
@@ -1026,7 +1030,7 @@ fn test_parse_mixed() {
         iface.methods[2].returns,
         Some(vec![Field {
             name: "child".to_string(),
-            ty: Type::Ref(Some("Spatial".into())),
+            ty: Type::Ref(Some(CustomType::Named("Spatial".into()))),
             doc: None
         }])
     );
@@ -1041,7 +1045,7 @@ fn test_parse_mixed() {
         hit.variants[1].fields[0],
         Field {
             name: "point".to_string(),
-            ty: Type::Named("Vec3".into()),
+            ty: Type::Custom(CustomType::Named("Vec3".into())),
             doc: None
         }
     );
@@ -1049,7 +1053,7 @@ fn test_parse_mixed() {
         hit.variants[1].fields[1],
         Field {
             name: "normal".to_string(),
-            ty: Type::Named("Vec3".into()),
+            ty: Type::Custom(CustomType::Named("Vec3".into())),
             doc: None
         }
     );
@@ -1196,7 +1200,7 @@ fn test_field_and_variant_docs() {
         e.variants[1].fields[0],
         Field {
             name: "color".to_string(),
-            ty: Type::Named("Color".into()),
+            ty: Type::Custom(CustomType::Named("Color".into())),
             doc: Some("The fill color".to_string())
         }
     );
@@ -1206,7 +1210,7 @@ fn test_field_and_variant_docs() {
         e.variants[2].fields[0],
         Field {
             name: "start".to_string(),
-            ty: Type::Named("Color".into()),
+            ty: Type::Custom(CustomType::Named("Color".into())),
             doc: None
         }
     );
@@ -1343,12 +1347,12 @@ fn test_mixed_doc_comments() {
                             params: vec![
                                 Field {
                                     name: "pos".to_string(),
-                                    ty: Type::Named("Point".into()),
+                                    ty: Type::Custom(CustomType::Named("Point".into())),
                                     doc: None
                                 },
                                 Field {
                                     name: "shape".to_string(),
-                                    ty: Type::Named("Shape".into()),
+                                    ty: Type::Custom(CustomType::Named("Shape".into())),
                                     doc: None
                                 },
                             ],
@@ -1483,11 +1487,11 @@ fn test_parse_qualified_type_in_params() {
         .1;
     assert_eq!(
         iface.methods[0].params[0].ty,
-        Type::Qualified("spatial".into(), "Vec3".into())
+        Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))
     );
     assert_eq!(
         iface.methods[0].returns.as_ref().unwrap()[0].ty,
-        Type::Qualified("spatial".into(), "HitResult".into())
+        Type::Custom(CustomType::Qualified("spatial".into(), "HitResult".into()))
     );
 }
 
@@ -1514,25 +1518,25 @@ fn test_parse_qualified_type_in_containers() {
 
     assert_eq!(
         iface.methods[0].returns.as_ref().unwrap()[0].ty,
-        Type::Vec(Box::new(Type::Qualified("spatial".into(), "Vec3".into())))
+        Type::Vec(Box::new(Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))))
     );
     assert_eq!(
         iface.methods[1].returns.as_ref().unwrap()[0].ty,
         Type::Map(
             Box::new(Type::String),
-            Box::new(Type::Qualified("spatial".into(), "Vec3".into()))
+            Box::new(Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into())))
         )
     );
     assert_eq!(
         iface.methods[2].returns.as_ref().unwrap()[0].ty,
         Type::Array(
-            Box::new(Type::Qualified("spatial".into(), "Vec3".into())),
+            Box::new(Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))),
             4
         )
     );
     assert_eq!(
         iface.methods[3].returns.as_ref().unwrap()[0].ty,
-        Type::Ref(Some("spatial::Node".into()))
+        Type::Ref(Some(CustomType::Qualified("spatial".into(), "Node".into())))
     );
 }
 
@@ -1556,11 +1560,11 @@ fn test_parse_qualified_type_in_struct() {
         .1;
     assert_eq!(
         s.fields[0].ty,
-        Type::Qualified("spatial".into(), "Vec3".into())
+        Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))
     );
     assert_eq!(
         s.fields[1].ty,
-        Type::Qualified("spatial".into(), "Quat".into())
+        Type::Custom(CustomType::Qualified("spatial".into(), "Quat".into()))
     );
 }
 
@@ -1586,7 +1590,7 @@ fn test_parse_qualified_type_in_enum() {
         .1;
     assert_eq!(
         e.variants[1].fields[0].ty,
-        Type::Qualified("spatial".into(), "Vec3".into())
+        Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))
     );
 }
 
@@ -1625,7 +1629,7 @@ fn test_load_protocol_basic() {
         .1;
     assert_eq!(
         iface.methods[0].params[0].ty,
-        Type::Qualified("spatial".into(), "Vec3".into())
+        Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))
     );
 }
 

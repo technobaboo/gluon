@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use convert_case::{Case, Casing};
-use gluon_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
+use gluon_parser::{CustomType, EnumDef, Field, Interface, Protocol, StructDef, Type};
 use gluon_wire::ExternalGluonProtocol;
 use quote::{format_ident, quote};
 
@@ -564,33 +564,13 @@ pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx) -> proc_macro2::TokenStre
     }
 }
 
-pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
-    match def {
-        Type::Bool => quote! {bool},
-        Type::U8 => quote! {u8},
-        Type::U16 => quote! {u16},
-        Type::U32 => quote! {u32},
-        Type::U64 => quote! {u64},
-        Type::I8 => quote! {i8},
-        Type::I16 => quote! {i16},
-        Type::I32 => quote! {i32},
-        Type::I64 => quote! {i64},
-        Type::F32 => quote! {f32},
-        Type::F64 => quote! {i64},
-        Type::String => quote! {String},
-        Type::Fd => quote! {std::os::fd::OwnedFd},
-        Type::Ref(ref_type) => match ref_type {
-            Some(name) => {
-                let name = format_ident!("{}", name.to_case(Case::Pascal));
-                quote! {#name}
-            }
-            None => quote! {binderbinder::binder_object::BinderObjectOrRef},
-        },
-        Type::Named(name) => {
+pub fn gen_custom_type(custom: &CustomType, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    match custom {
+        CustomType::Named(name) => {
             let name = format_ident!("{}", name.to_case(Case::Pascal));
             quote! {#name}
         }
-        Type::Qualified(namespace, name) => {
+        CustomType::Qualified(namespace, name) => {
             let import = gen_ctx
                 .curr_protocol
                 .imports
@@ -614,6 +594,29 @@ pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             let name = format_ident!("{}", name.to_case(Case::Pascal));
             quote! {#(#namespace_path)::*::#name}
         }
+    }
+}
+
+pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    match def {
+        Type::Bool => quote! {bool},
+        Type::U8 => quote! {u8},
+        Type::U16 => quote! {u16},
+        Type::U32 => quote! {u32},
+        Type::U64 => quote! {u64},
+        Type::I8 => quote! {i8},
+        Type::I16 => quote! {i16},
+        Type::I32 => quote! {i32},
+        Type::I64 => quote! {i64},
+        Type::F32 => quote! {f32},
+        Type::F64 => quote! {i64},
+        Type::String => quote! {String},
+        Type::Fd => quote! {std::os::fd::OwnedFd},
+        Type::Ref(ref_type) => match ref_type {
+            Some(custom) => gen_custom_type(custom, gen_ctx),
+            None => quote! {binderbinder::binder_object::BinderObjectOrRef},
+        },
+        Type::Custom(custom) => gen_custom_type(custom, gen_ctx),
         Type::Array(type_def, len) => {
             let type_def = gen_type(type_def, gen_ctx);
             quote! {[#type_def; #len]}
@@ -678,8 +681,35 @@ pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Vec<&'static str> {
         // i don't think OwnedFd implements any derivable traits? (other that Debug)
         Type::Fd => vec![],
         Type::Ref(_) => vec!["Clone"],
-        Type::Named(name) => derives_from_protocol(name, gen_ctx),
-        Type::Qualified(namespace, type_name) => {
+        Type::Custom(custom) => custom_type_derives(custom, gen_ctx),
+        Type::Array(v, _) => supported_derives(v, gen_ctx),
+        Type::Vec(v) => supported_derives(v, gen_ctx)
+            .into_iter()
+            .filter(|v| *v != "Copy")
+            .collect(),
+        Type::Set(v) => supported_derives(v, gen_ctx),
+        Type::Option(v) => supported_derives(v, gen_ctx),
+        // TODO: figure out correct semantics
+        Type::Result(_, _) => vec![],
+        // TODO: figure out correct semantics
+        Type::Map(_, _) => vec![],
+    }
+}
+
+fn union_derives(derives_1: Vec<&'static str>, derives_2: Vec<&'static str>) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for derive in derives_1 {
+        if derives_2.contains(&derive) {
+            out.push(derive);
+        }
+    }
+    out
+}
+
+fn custom_type_derives(custom: &CustomType, gen_ctx: &GenCtx) -> Vec<&'static str> {
+    match custom {
+        CustomType::Named(name) => derives_from_protocol(name, gen_ctx),
+        CustomType::Qualified(namespace, type_name) => {
             let import = gen_ctx
                 .curr_protocol
                 .imports
@@ -704,37 +734,16 @@ pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Vec<&'static str> {
                 .external_protocols
                 .iter()
                 .find(|v| v.protocol_name == import.name)
-                .expect(&format!("unknown import: {namespace}"));
+                .unwrap_or_else(|| panic!("unknown import: {namespace}"));
             proto
                 .types
                 .iter()
                 .find(|v| v.name == type_name)
-                .expect(&format!("unknown type: {type_name}"))
+                .unwrap_or_else(|| panic!("unknown type: {type_name}"))
                 .supported_traits
                 .to_vec()
         }
-        Type::Array(v, _) => supported_derives(v, gen_ctx),
-        Type::Vec(v) => supported_derives(v, gen_ctx)
-            .into_iter()
-            .filter(|v| *v != "Copy")
-            .collect(),
-        Type::Set(v) => supported_derives(v, gen_ctx),
-        Type::Option(v) => supported_derives(v, gen_ctx),
-        // TODO: figure out correct semantics
-        Type::Result(_, _) => vec![],
-        // TODO: figure out correct semantics
-        Type::Map(_, _) => vec![],
     }
-}
-
-fn union_derives(derives_1: Vec<&'static str>, derives_2: Vec<&'static str>) -> Vec<&'static str> {
-    let mut out = Vec::new();
-    for derive in derives_1 {
-        if derives_2.contains(&derive) {
-            out.push(derive);
-        }
-    }
-    out
 }
 
 fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str> {
@@ -770,5 +779,5 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str>
                 .find(|(name, _)| name == type_name)
                 .map(|_| vec!["Clone"])
         })
-        .expect(&format!("unknown type: {type_name}"))
+        .unwrap_or_else(|| panic!("unknown type: {type_name}"))
 }
