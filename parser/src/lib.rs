@@ -80,8 +80,8 @@ pub enum Type {
     F64,
     String,
     Fd,
-    Ref(Option<CustomType>),   // binder object reference, optionally typed
-    Custom(CustomType),        // reference to a struct, enum, or imported type by name
+    Ref(Option<CustomType>), // binder object reference, optionally typed
+    Custom(CustomType),      // reference to a struct, enum, or imported type by name
     Array(Box<Type>, u32),
     Vec(Box<Type>),
     Set(Box<Type>),
@@ -91,31 +91,18 @@ pub enum Type {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParseError {
-    pub errors: Vec<ParseErrorEntry>,
-}
-
-#[derive(Debug, Clone)]
 pub struct ParseErrorEntry {
     pub line: usize,
     pub col: usize,
+    pub source_line: String,
     pub found: String,
     pub expected: Vec<String>,
 }
 
-impl std::fmt::Display for ParseErrorEntry {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let expected = if self.expected.is_empty() {
-            "something else".to_string()
-        } else {
-            self.expected.join(", ")
-        };
-        write!(
-            f,
-            "{}:{}: found {}, expected {expected}",
-            self.line, self.col, self.found
-        )
-    }
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    pub file: String,
+    pub errors: Vec<ParseErrorEntry>,
 }
 
 impl std::fmt::Display for ParseError {
@@ -123,8 +110,37 @@ impl std::fmt::Display for ParseError {
         for (i, entry) in self.errors.iter().enumerate() {
             if i > 0 {
                 writeln!(f)?;
+                writeln!(f)?;
             }
-            write!(f, "{entry}")?;
+            let line_num = entry.line.to_string();
+            let gutter = line_num.len();
+
+            // header: "error: found 'x', expected ..."
+            let expected = if entry.expected.is_empty() {
+                "something else".to_string()
+            } else if entry.expected.len() == 1 {
+                entry.expected[0].clone()
+            } else {
+                let (last, rest) = entry.expected.split_last().unwrap();
+                format!("{} or {last}", rest.join(", "))
+            };
+            writeln!(f, "error: unexpected {}, expected {expected}", entry.found)?;
+
+            // location line: " --> file:line:col"
+            writeln!(
+                f,
+                "{:>gutter$}--> {}:{}:{}",
+                " ", self.file, entry.line, entry.col
+            )?;
+
+            // blank gutter
+            writeln!(f, "{:>gutter$} |", " ")?;
+
+            // source line
+            writeln!(f, "{line_num} | {}", entry.source_line)?;
+
+            // caret
+            write!(f, "{:>gutter$} | {:>col$}", " ", "^", col = entry.col)?;
         }
         Ok(())
     }
@@ -192,9 +208,12 @@ fn rich_to_entry(src: &str, err: &Rich<'_, char>) -> ParseErrorEntry {
             }
         })
         .collect();
+    let source_line = src.lines().nth(line - 1).unwrap_or("").to_string();
+
     ParseErrorEntry {
         line,
         col,
+        source_line,
         found: err
             .found()
             .map(|c| match c {
@@ -544,6 +563,7 @@ pub fn parse_idl(name: &str, input: &str) -> Result<Protocol, ParseError> {
         .parse(input)
         .into_result()
         .map_err(|errs| ParseError {
+            file: name.to_string(),
             errors: errs.iter().map(|e| rich_to_entry(input, e)).collect(),
         })?;
     protocol.name = name.to_string();
@@ -1525,19 +1545,28 @@ fn test_parse_qualified_type_in_containers() {
 
     assert_eq!(
         iface.methods[0].returns.as_ref().unwrap()[0].ty,
-        Type::Vec(Box::new(Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))))
+        Type::Vec(Box::new(Type::Custom(CustomType::Qualified(
+            "spatial".into(),
+            "Vec3".into()
+        ))))
     );
     assert_eq!(
         iface.methods[1].returns.as_ref().unwrap()[0].ty,
         Type::Map(
             Box::new(Type::String),
-            Box::new(Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into())))
+            Box::new(Type::Custom(CustomType::Qualified(
+                "spatial".into(),
+                "Vec3".into()
+            )))
         )
     );
     assert_eq!(
         iface.methods[2].returns.as_ref().unwrap()[0].ty,
         Type::Array(
-            Box::new(Type::Custom(CustomType::Qualified("spatial".into(), "Vec3".into()))),
+            Box::new(Type::Custom(CustomType::Qualified(
+                "spatial".into(),
+                "Vec3".into()
+            ))),
             4
         )
     );
