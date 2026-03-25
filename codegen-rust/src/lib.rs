@@ -1,9 +1,10 @@
-use std::ops::Deref;
-
 use convert_case::{Case, Casing};
 use gluon_parser::{CustomType, EnumDef, Field, Interface, Protocol, StructDef, Type};
-use gluon_wire::{Derives, ExternalGluonProtocol};
+use gluon_wire::ExternalGluonProtocol;
 use quote::{format_ident, quote};
+use std::ops::Deref;
+
+pub use gluon_wire::Derives;
 
 pub mod helpers;
 
@@ -677,7 +678,16 @@ pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Derives {
         | Type::I32
         | Type::I64 => requested & Derives::INTEGERS,
         Type::F32 | Type::F64 => requested & Derives::FLOATS,
-        Type::String => requested & (Derives::CLONE | Derives::HASH | Derives::PARTIAL_EQ | Derives::EQ | Derives::PARTIAL_ORD | Derives::ORD | Derives::DEFAULT),
+        Type::String => {
+            requested
+                & (Derives::CLONE
+                    | Derives::HASH
+                    | Derives::PARTIAL_EQ
+                    | Derives::EQ
+                    | Derives::PARTIAL_ORD
+                    | Derives::ORD
+                    | Derives::DEFAULT)
+        }
         // OwnedFd doesn't implement any derivable traits (other than Debug)
         Type::Fd => Derives::empty(),
         Type::Ref(_) => requested & Derives::CLONE,
@@ -772,13 +782,29 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
 
 fn derives_to_tokens(derives: Derives) -> Vec<proc_macro2::Ident> {
     let mut out = Vec::new();
-    if derives.contains(Derives::COPY) { out.push(format_ident!("Copy")); }
-    if derives.contains(Derives::CLONE) { out.push(format_ident!("Clone")); }
-    if derives.contains(Derives::HASH) { out.push(format_ident!("Hash")); }
-    if derives.contains(Derives::PARTIAL_EQ) { out.push(format_ident!("PartialEq")); }
-    if derives.contains(Derives::EQ) { out.push(format_ident!("Eq")); }
-    if derives.contains(Derives::PARTIAL_ORD) { out.push(format_ident!("PartialOrd")); }
-    if derives.contains(Derives::ORD) { out.push(format_ident!("Ord")); }
-    if derives.contains(Derives::DEFAULT) { out.push(format_ident!("Default")); }
+    if derives.contains(Derives::COPY) {
+        out.push(format_ident!("Copy"));
+    }
+    if derives.contains(Derives::CLONE) {
+        out.push(format_ident!("Clone"));
+    }
+    if derives.contains(Derives::HASH) {
+        out.push(format_ident!("Hash"));
+    }
+    if derives.contains(Derives::PARTIAL_EQ) {
+        out.push(format_ident!("PartialEq"));
+    }
+    if derives.contains(Derives::EQ) {
+        out.push(format_ident!("Eq"));
+    }
+    if derives.contains(Derives::PARTIAL_ORD) {
+        out.push(format_ident!("PartialOrd"));
+    }
+    if derives.contains(Derives::ORD) {
+        out.push(format_ident!("Ord"));
+    }
+    if derives.contains(Derives::DEFAULT) {
+        out.push(format_ident!("Default"));
+    }
     out
 }

@@ -1,12 +1,9 @@
-use std::{fs, path::Path};
-
+use crate::{ExternalProtocol, LocalProtocol, gen_module};
 use convert_case::{Case, Casing};
 use gluon_parser::parse_idl;
-use quote::{format_ident, quote};
-
 use gluon_wire::Derives;
-
-use crate::{ExternalProtocol, LocalProtocol, gen_module};
+use quote::{format_ident, quote};
+use std::{fs, path::Path};
 
 /// Generates all modules into one large file with one inline rust module for each gluon module
 pub fn gen_multiple_modules(
