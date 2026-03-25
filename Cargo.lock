@@ -209,6 +209,7 @@ version = "0.1.0"
 dependencies = [
  "convert_case",
  "gluon-parser",
+ "gluon-wire",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -221,6 +222,7 @@ version = "0.1.0"
 dependencies = [
  "binderbinder",
  "chumsky",
+ "convert_case",
  "tempfile",
 ]
 

@@ -1,31 +1,109 @@
+use std::ops::Deref;
+
 use convert_case::{Case, Casing};
 use gluon_parser::{EnumDef, Field, Interface, Protocol, StructDef, Type};
+use gluon_wire::ExternalGluonProtocol;
 use quote::{format_ident, quote};
 
 pub mod helpers;
 
-pub fn gen_module(proto: &Protocol) -> proc_macro2::TokenStream {
+/// the [`ExternalGluonProtocol`] should come from the `EXTERNAL_PROTOCOL` const from the module
+/// defined in `rust_module`
+pub struct ExternalProtocol {
+    pub rust_module: &'static str,
+    pub external_protocol: ExternalGluonProtocol,
+}
+pub struct LocalProtocol {
+    pub rust_module: String,
+    pub protocol: Protocol,
+}
+impl Deref for LocalProtocol {
+    type Target = Protocol;
+
+    fn deref(&self) -> &Self::Target {
+        &self.protocol
+    }
+}
+impl Deref for ExternalProtocol {
+    type Target = ExternalGluonProtocol;
+
+    fn deref(&self) -> &Self::Target {
+        &self.external_protocol
+    }
+}
+#[derive(Clone, Copy)]
+pub struct GenCtx<'a> {
+    pub curr_protocol: &'a LocalProtocol,
+    pub other_local_protocols: &'a [&'a LocalProtocol],
+    pub external_protocols: &'a [&'a ExternalProtocol],
+}
+
+pub fn gen_module(
+    proto: &LocalProtocol,
+    other_local_protocols: &[&LocalProtocol],
+    external_protocols: &[&ExternalProtocol],
+) -> proc_macro2::TokenStream {
+    let gen_ctx = &GenCtx {
+        curr_protocol: proto,
+        other_local_protocols,
+        external_protocols,
+    };
     let interfaces = proto
         .interfaces
         .iter()
-        .map(|(name, interface)| gen_interface(name, interface));
-    let structs = proto.structs.iter().map(|(_name, def)| gen_struct(def));
-    let enums = proto.enums.iter().map(|(_name, def)| gen_enum(def));
-    let imports = proto.imports.iter().map(|def| {
-        dbg!(&def);
-        let path = def.path.split("::").map(|v| format_ident!("{}", v));
-        quote! {use #(#path)::*;}
-    });
+        .map(|(name, interface)| gen_interface(name, interface, gen_ctx));
+    let structs = proto
+        .structs
+        .iter()
+        .map(|(_name, def)| gen_struct(def, gen_ctx));
+    let enums = proto
+        .enums
+        .iter()
+        .map(|(_name, def)| gen_enum(def, gen_ctx));
+    let external_proto_const = gen_external_protocol_const(gen_ctx);
     quote! {
         #![allow(unused, clippy::single_match, clippy::match_single_binding)]
         use gluon_wire::GluonConvertable;
-        #(#imports)*
+        #external_proto_const
         #(#structs)*
         #(#enums)*
         #(#interfaces)*
     }
 }
-pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::TokenStream {
+pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    let types = gen_ctx
+        .curr_protocol
+        .structs
+        .iter()
+        .map(|(name, v)| (name.clone(), struct_supported_derives(v, gen_ctx)))
+        .chain(
+            gen_ctx
+                .curr_protocol
+                .enums
+                .iter()
+                .map(|(name, v)| (name.clone(), enum_supported_derives(v, gen_ctx))),
+        )
+        .map(|(name, derives)| {
+            quote! {
+                gluon_wire::ExternalGluonType {
+                    name: #name,
+                    supported_traits: &[#(#derives),*]
+                }
+            }
+        });
+    let proto_name = &gen_ctx.curr_protocol.name;
+    quote! {
+        pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::ExternalGluonProtocol {
+            protocol_name: #proto_name,
+            types: &[#(#types),*],
+        };
+    }
+}
+pub fn gen_interface(
+    interface_name: &str,
+    def: &Interface,
+    gen_ctx: &GenCtx,
+) -> proc_macro2::TokenStream {
     let name = format_ident!("{}", interface_name.to_case(Case::Pascal));
     let handler_name = format_ident!("{name}Handler");
     let handler = {
@@ -79,7 +157,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
             });
         let methods = def.methods.iter().map(|method| {
             let params = method.params.iter().map(|param| {
-                let type_def = gen_type(&param.ty);
+                let type_def = gen_type(&param.ty, gen_ctx);
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
                 quote! {
                     #name: #type_def
@@ -88,10 +166,11 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
             // TODO: gen return docs and names into main fn docs?
-            let return_types = method
-                .returns
-                .as_ref()
-                .map(|v| v.iter().map(|v| gen_type(&v.ty)).collect::<Vec<_>>());
+            let return_types = method.returns.as_ref().map(|v| {
+                v.iter()
+                    .map(|v| gen_type(&v.ty, gen_ctx))
+                    .collect::<Vec<_>>()
+            });
             let fn_return = match return_types.as_deref() {
                 None => {
                     quote! {}
@@ -146,7 +225,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
     let proxy = {
         let methods = def.methods.iter().enumerate().map(|(i, method)| {
             let params = method.params.iter().map(|param| {
-                let type_def = gen_type(&param.ty);
+                let type_def = gen_type(&param.ty,gen_ctx);
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
                 quote! {
                     #name: #type_def
@@ -161,7 +240,7 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
             let return_types = method
                 .returns
                 .as_ref()
-                .map(|v| v.iter().map(|v| gen_type(&v.ty)).collect::<Vec<_>>());
+                .map(|v| v.iter().map(|v| gen_type(&v.ty,gen_ctx)).collect::<Vec<_>>());
             let i = i as u32 + 8;
             match return_types {
                 Some(types) => {
@@ -285,10 +364,12 @@ pub fn gen_interface(interface_name: &str, def: &Interface) -> proc_macro2::Toke
     }
 }
 
-pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
-    let fields = def.fields.iter().map(gen_field_struct);
+pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    let fields = def.fields.iter().map(|f| gen_field_struct(f, gen_ctx));
     let name = def.name.to_case(Case::Pascal);
-    let (derive, name) = derive_from_name(&name);
+    let derives = struct_supported_derives(def, gen_ctx)
+        .into_iter()
+        .map(|der| format_ident!("{}", der));
     let name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
@@ -321,7 +402,7 @@ pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
     };
     quote! {
         #[doc = #doc]
-        #derive
+        #[derive(Debug, #(#derives),*)]
         pub struct #name {
             #(#fields)*
         }
@@ -330,9 +411,9 @@ pub fn gen_struct(def: &StructDef) -> proc_macro2::TokenStream {
     }
 }
 
-pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
+pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     let variants = def.variants.iter().map(|variant| {
-        let fields = variant.fields.iter().map(gen_field_enum);
+        let fields = variant.fields.iter().map(|f| gen_field_enum(f, gen_ctx));
         let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
         let doc_comment = variant.doc.as_ref().map(|str| quote! {#[doc = #str]});
         if !variant.fields.is_empty() {
@@ -350,7 +431,9 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
         }
     });
     let name = def.name.to_case(Case::Pascal);
-    let (derive, name) = derive_from_name(&name);
+    let derives = enum_supported_derives(def, gen_ctx)
+        .into_iter()
+        .map(|der| format_ident!("{}", der));
     let enum_name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
@@ -453,7 +536,7 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
     };
     quote! {
         #[doc = #doc]
-        #derive
+        #[derive(Debug, #(#derives),*)]
         pub enum #enum_name {
             #(#variants),*
         }
@@ -462,35 +545,8 @@ pub fn gen_enum(def: &EnumDef) -> proc_macro2::TokenStream {
     }
 }
 
-fn derive_from_name(name: &str) -> (proc_macro2::TokenStream, &str) {
-    if let Some(str) = name.strip_suffix("CloneHash") {
-        (
-            quote! {
-                #[derive(Clone, Hash, Debug)]
-            },
-            str,
-        )
-    } else if let Some(str) = name.strip_suffix("Clone") {
-        (
-            quote! {
-                #[derive(Clone, Debug)]
-            },
-            str,
-        )
-    } else if let Some(str) = name.strip_suffix("Hash") {
-        (
-            quote! {
-                #[derive(Hash, Debug)]
-            },
-            str,
-        )
-    } else {
-        (quote! {#[derive(Debug)]}, name)
-    }
-}
-
-pub fn gen_field_enum(def: &Field) -> proc_macro2::TokenStream {
-    let type_def = gen_type(&def.ty);
+pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    let type_def = gen_type(&def.ty, gen_ctx);
     let name = format_ident!("{}", def.name.to_case(Case::Snake));
     let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
     quote! {
@@ -498,8 +554,8 @@ pub fn gen_field_enum(def: &Field) -> proc_macro2::TokenStream {
         #name: #type_def,
     }
 }
-pub fn gen_field_struct(def: &Field) -> proc_macro2::TokenStream {
-    let type_def = gen_type(&def.ty);
+pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    let type_def = gen_type(&def.ty, gen_ctx);
     let name = format_ident!("{}", def.name.to_case(Case::Snake));
     let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
     quote! {
@@ -508,7 +564,7 @@ pub fn gen_field_struct(def: &Field) -> proc_macro2::TokenStream {
     }
 }
 
-pub fn gen_type(def: &Type) -> proc_macro2::TokenStream {
+pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     match def {
         Type::Bool => quote! {bool},
         Type::U8 => quote! {u8},
@@ -534,36 +590,177 @@ pub fn gen_type(def: &Type) -> proc_macro2::TokenStream {
             let name = format_ident!("{}", name.to_case(Case::Pascal));
             quote! {#name}
         }
-        Type::Qualified(space, name) => {
-            let space = format_ident!("{}", space.to_case(Case::Snake));
+        Type::Qualified(namespace, name) => {
+            let import = gen_ctx
+                .curr_protocol
+                .imports
+                .iter()
+                .find(|v| &v.alias == namespace)
+                .expect("unknown namespace used in qualified type");
+            let rust_mod = gen_ctx
+                .other_local_protocols
+                .iter()
+                .find(|v| v.name == import.name)
+                .map(|v| v.rust_module.clone())
+                .or_else(|| {
+                    gen_ctx
+                        .external_protocols
+                        .iter()
+                        .find(|v| v.protocol_name == import.name)
+                        .map(|v| v.rust_module.to_string())
+                })
+                .expect("failed to resolve namespace for qualified type");
+            let namespace_path = rust_mod.split("::").map(|v| format_ident!("{}", v));
             let name = format_ident!("{}", name.to_case(Case::Pascal));
-            quote! {#space::#name}
+            quote! {#(#namespace_path)::*::#name}
         }
         Type::Array(type_def, len) => {
-            let type_def = gen_type(type_def);
+            let type_def = gen_type(type_def, gen_ctx);
             quote! {[#type_def; #len]}
         }
         Type::Vec(type_def) => {
-            let type_def = gen_type(type_def);
+            let type_def = gen_type(type_def, gen_ctx);
             quote! {Vec<#type_def>}
         }
         Type::Set(type_def) => {
-            let type_def = gen_type(type_def);
+            let type_def = gen_type(type_def, gen_ctx);
             quote! {std::collections::hash::HashSet<#type_def>}
         }
         Type::Map(key, value) => {
-            let key = gen_type(key);
-            let value = gen_type(value);
+            let key = gen_type(key, gen_ctx);
+            let value = gen_type(value, gen_ctx);
             quote! {std::collections::hash::HashMap<#key,#value>}
         }
         Type::Option(type_def) => {
-            let type_def = gen_type(type_def);
+            let type_def = gen_type(type_def, gen_ctx);
             quote! {Option<#type_def>}
         }
         Type::Result(ok, err) => {
-            let ok = gen_type(ok);
-            let err = gen_type(err);
+            let ok = gen_type(ok, gen_ctx);
+            let err = gen_type(err, gen_ctx);
             quote! {Result<#ok, #err>}
         }
     }
+}
+
+fn struct_supported_derives(def: &StructDef, gen_ctx: &GenCtx) -> Vec<&'static str> {
+    def.fields
+        .iter()
+        .map(|f| supported_derives(&f.ty, gen_ctx))
+        .reduce(union_derives)
+        .unwrap_or_else(Vec::new)
+}
+fn enum_supported_derives(def: &EnumDef, gen_ctx: &GenCtx) -> Vec<&'static str> {
+    def.variants
+        .iter()
+        .flat_map(|v| v.fields.iter())
+        .map(|f| supported_derives(&f.ty, gen_ctx))
+        .reduce(union_derives)
+        .unwrap_or_else(Vec::new)
+}
+
+// TODO: expose primitive derives so implementations can add custom derives like serde
+// TODO: make sure this only returns known derives, else adding custom derives in externally
+// generated protocols can break dependents
+pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Vec<&'static str> {
+    match def {
+        Type::Bool
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64 => vec!["Copy", "Clone", "Hash", "PartialEq", "Eq"],
+        Type::F32 | Type::F64 => vec!["Copy", "Clone", "PartialEq"],
+        Type::String => vec!["Clone", "Hash", "PartialEq", "Eq"],
+        // i don't think OwnedFd implements any derivable traits? (other that Debug)
+        Type::Fd => vec![],
+        Type::Ref(_) => vec!["Clone"],
+        Type::Named(name) => derives_from_protocol(name, gen_ctx),
+        Type::Qualified(namespace, type_name) => {
+            let import = gen_ctx
+                .curr_protocol
+                .imports
+                .iter()
+                .find(|v| &v.alias == namespace)
+                .expect("unknown namespace used in qualified type");
+            if let Some(v) = gen_ctx
+                .other_local_protocols
+                .iter()
+                .find(|v| v.name == import.name)
+            {
+                return derives_from_protocol(
+                    type_name,
+                    &GenCtx {
+                        curr_protocol: v,
+                        ..*gen_ctx
+                    },
+                );
+            }
+
+            let proto = gen_ctx
+                .external_protocols
+                .iter()
+                .find(|v| v.protocol_name == import.name)
+                .expect(&format!("unknown import: {namespace}"));
+            proto
+                .types
+                .iter()
+                .find(|v| v.name == type_name)
+                .expect(&format!("unknown type: {type_name}"))
+                .supported_traits
+                .to_vec()
+        }
+        Type::Array(v, _) => supported_derives(v, gen_ctx),
+        Type::Vec(v) => supported_derives(v, gen_ctx)
+            .into_iter()
+            .filter(|v| *v != "Copy")
+            .collect(),
+        Type::Set(v) => supported_derives(v, gen_ctx),
+        Type::Option(v) => supported_derives(v, gen_ctx),
+        // TODO: figure out correct semantics
+        Type::Result(_, _) => vec![],
+        // TODO: figure out correct semantics
+        Type::Map(_, _) => vec![],
+    }
+}
+
+fn union_derives(derives_1: Vec<&'static str>, derives_2: Vec<&'static str>) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for derive in derives_1 {
+        if derives_2.contains(&derive) {
+            out.push(derive);
+        }
+    }
+    out
+}
+
+fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str> {
+    gen_ctx
+        .curr_protocol
+        .enums
+        .iter()
+        .find(|(n, _)| n == type_name)
+        .and_then(|(_, v)| {
+            v.variants
+                .iter()
+                .flat_map(|v| v.fields.iter().map(|v| supported_derives(&v.ty, gen_ctx)))
+                .reduce(union_derives)
+        })
+        .or_else(|| {
+            gen_ctx
+                .curr_protocol
+                .structs
+                .iter()
+                .find(|(n, _)| dbg!(n) == type_name)
+                .and_then(|(_, v)| {
+                    v.fields
+                        .iter()
+                        .map(|v| supported_derives(&v.ty, gen_ctx))
+                        .reduce(union_derives)
+                })
+        })
+        .expect(&format!("unknown type: {type_name}"))
 }

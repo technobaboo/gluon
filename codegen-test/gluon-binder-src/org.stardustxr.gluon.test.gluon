@@ -10,7 +10,7 @@ interface Test {
 }
 
 /// test struct
-struct TestStructClone {
+struct TestStruct {
 	string: String,
 	id: u64,
 	binder_ref: Ref<Test>,
@@ -25,4 +25,10 @@ enum TestEnum {
 		fd: Fd,
 	},
 	EmptyVariant
+}
+/// test struct
+struct Vec3 {
+	x: u32,
+	y: u32,
+	z: u32,
 }

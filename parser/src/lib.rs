@@ -1,9 +1,10 @@
 use chumsky::{prelude::*, text::keyword};
+use convert_case::{Case, Casing};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportDecl {
-    pub path: String,
+    pub name: String,
     pub alias: String,
 }
 
@@ -11,7 +12,6 @@ pub struct ImportDecl {
 pub struct Protocol {
     pub name: String,
     pub imports: Vec<ImportDecl>,
-    pub imported_protocols: Vec<(String, Protocol)>,
     pub interfaces: Vec<(String, Interface)>,
     pub structs: Vec<(String, StructDef)>,
     pub enums: Vec<(String, EnumDef)>,
@@ -207,7 +207,11 @@ fn rich_to_entry(src: &str, err: &Rich<'_, char>) -> ParseErrorEntry {
 pub fn default_alias(path: &str) -> String {
     let filename = path.rsplit('/').next().unwrap_or(path);
     let stem = filename.strip_suffix(".gluon").unwrap_or(filename);
-    stem.rsplit('.').next().unwrap_or(stem).to_string()
+    stem.rsplit('.')
+        .next()
+        .unwrap_or(stem)
+        .to_string()
+        .to_case(Case::Snake)
 }
 
 pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<'src, char>>> {
@@ -243,9 +247,9 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
                 .ignore_then(text::ident().map(str::to_string))
                 .or_not(),
         )
-        .map(|(path, alias_opt): (String, Option<String>)| {
-            let alias = alias_opt.unwrap_or_else(|| default_alias(&path));
-            ImportDecl { path, alias }
+        .map(|(name, alias_opt): (String, Option<String>)| {
+            let alias = alias_opt.unwrap_or_else(|| default_alias(&name));
+            ImportDecl { name, alias }
         });
 
     let imports = import_stmt
@@ -377,10 +381,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
     let params = param
         .separated_by(just(',').padded_by(ws))
         .collect::<Vec<Field>>()
-        .delimited_by(
-            just('(').padded_by(ws),
-            just(')').padded_by(ws),
-        );
+        .delimited_by(just('(').padded_by(ws), just(')').padded_by(ws));
 
     let returns = just("->")
         .padded_by(ws)
@@ -400,10 +401,7 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             params,
             returns,
         });
-    let methods = method
-        .padded_by(ws)
-        .repeated()
-        .collect::<Vec<Method>>();
+    let methods = method.padded_by(ws).repeated().collect::<Vec<Method>>();
 
     // --- Interface ---
     let interface = req_doc_block
@@ -530,7 +528,6 @@ pub fn parser<'src>() -> impl Parser<'src, &'src str, Protocol, extra::Err<Rich<
             Protocol {
                 name: "".to_string(),
                 imports,
-                imported_protocols: Vec::new(),
                 interfaces,
                 structs,
                 enums,
@@ -565,7 +562,6 @@ fn test_parse_idl() {
         Protocol {
             name: "Test".to_string(),
             imports: vec![],
-            imported_protocols: Vec::new(),
             interfaces: Vec::from([(
                 "Test".to_string(),
                 Interface {
@@ -1259,16 +1255,27 @@ fn test_mixed_doc_comments() {
         Protocol {
             name: "Test".to_string(),
             imports: vec![],
-            imported_protocols: vec![],
             structs: vec![(
                 "Point".to_string(),
                 StructDef {
                     name: "Point".to_string(),
                     doc: "A point in space".to_string(),
                     fields: vec![
-                        Field { name: "x".to_string(), ty: Type::F32, doc: Some("X coordinate".to_string()) },
-                        Field { name: "y".to_string(), ty: Type::F32, doc: None },
-                        Field { name: "z".to_string(), ty: Type::F32, doc: Some("Z coordinate".to_string()) },
+                        Field {
+                            name: "x".to_string(),
+                            ty: Type::F32,
+                            doc: Some("X coordinate".to_string())
+                        },
+                        Field {
+                            name: "y".to_string(),
+                            ty: Type::F32,
+                            doc: None
+                        },
+                        Field {
+                            name: "z".to_string(),
+                            ty: Type::F32,
+                            doc: Some("Z coordinate".to_string())
+                        },
                     ],
                 },
             )],
@@ -1286,16 +1293,26 @@ fn test_mixed_doc_comments() {
                         EnumVariant {
                             name: "Circle".to_string(),
                             doc: None,
-                            fields: vec![
-                                Field { name: "radius".to_string(), ty: Type::F32, doc: None },
-                            ],
+                            fields: vec![Field {
+                                name: "radius".to_string(),
+                                ty: Type::F32,
+                                doc: None
+                            },],
                         },
                         EnumVariant {
                             name: "Rect".to_string(),
                             doc: Some("A rectangle shape".to_string()),
                             fields: vec![
-                                Field { name: "width".to_string(), ty: Type::F32, doc: Some("Width of the rectangle".to_string()) },
-                                Field { name: "height".to_string(), ty: Type::F32, doc: None },
+                                Field {
+                                    name: "width".to_string(),
+                                    ty: Type::F32,
+                                    doc: Some("Width of the rectangle".to_string())
+                                },
+                                Field {
+                                    name: "height".to_string(),
+                                    ty: Type::F32,
+                                    doc: None
+                                },
                             ],
                         },
                     ],
@@ -1320,21 +1337,35 @@ fn test_mixed_doc_comments() {
                         },
                         Method {
                             name: "draw".to_string(),
-                            doc: Some("Draw a shape at a position\nwith the given color".to_string()),
+                            doc: Some(
+                                "Draw a shape at a position\nwith the given color".to_string()
+                            ),
                             params: vec![
-                                Field { name: "pos".to_string(), ty: Type::Named("Point".into()), doc: None },
-                                Field { name: "shape".to_string(), ty: Type::Named("Shape".into()), doc: None },
+                                Field {
+                                    name: "pos".to_string(),
+                                    ty: Type::Named("Point".into()),
+                                    doc: None
+                                },
+                                Field {
+                                    name: "shape".to_string(),
+                                    ty: Type::Named("Shape".into()),
+                                    doc: None
+                                },
                             ],
-                            returns: Some(vec![
-                                Field { name: "id".to_string(), ty: Type::U32, doc: None },
-                            ]),
+                            returns: Some(vec![Field {
+                                name: "id".to_string(),
+                                ty: Type::U32,
+                                doc: None
+                            },]),
                         },
                         Method {
                             name: "remove".to_string(),
                             doc: None,
-                            params: vec![
-                                Field { name: "id".to_string(), ty: Type::U32, doc: None },
-                            ],
+                            params: vec![Field {
+                                name: "id".to_string(),
+                                ty: Type::U32,
+                                doc: None
+                            },],
                             returns: Some(vec![]),
                         },
                     ],
@@ -1389,7 +1420,7 @@ fn load_protocol_inner(
 
     let source = std::fs::read_to_string(&canonical).map_err(LoadError::Io)?;
     let name = default_alias(canonical.to_str().unwrap_or(""));
-    let mut protocol = parse_idl(&name, &source).map_err(LoadError::Parse)?;
+    let protocol = parse_idl(&name, &source).map_err(LoadError::Parse)?;
 
     // Check for duplicate aliases
     let mut alias_set = std::collections::HashSet::new();
@@ -1397,16 +1428,6 @@ fn load_protocol_inner(
         if !alias_set.insert(import.alias.clone()) {
             return Err(LoadError::DuplicateAlias(import.alias.clone()));
         }
-    }
-
-    // Resolve imports
-    let parent_dir = canonical.parent().unwrap_or(Path::new("."));
-    for import in &protocol.imports {
-        let import_path = parent_dir.join(&import.path);
-        let imported = load_protocol_inner(&import_path, seen, cache)?;
-        protocol
-            .imported_protocols
-            .push((import.alias.clone(), imported));
     }
 
     seen.remove(&canonical);
@@ -1437,9 +1458,9 @@ fn test_parse_imports() {
     "#;
     let protocol = parse_idl("Test", input).unwrap();
     assert_eq!(protocol.imports.len(), 2);
-    assert_eq!(protocol.imports[0].path, "spatial.gluon");
+    assert_eq!(protocol.imports[0].name, "spatial.gluon");
     assert_eq!(protocol.imports[0].alias, "spatial");
-    assert_eq!(protocol.imports[1].path, "other.gluon");
+    assert_eq!(protocol.imports[1].name, "other.gluon");
     assert_eq!(protocol.imports[1].alias, "myalias");
 }
 
@@ -1595,20 +1616,6 @@ fn test_load_protocol_basic() {
     let protocol = load_protocol(&main_path).unwrap();
     assert_eq!(protocol.imports.len(), 1);
     assert_eq!(protocol.imports[0].alias, "spatial");
-    assert!(
-        protocol
-            .imported_protocols
-            .iter()
-            .any(|(name, _)| name == "spatial")
-    );
-
-    let spatial = &protocol
-        .imported_protocols
-        .iter()
-        .find(|(name, _)| name == "spatial")
-        .unwrap()
-        .1;
-    assert!(spatial.structs.iter().any(|(name, _)| name == "Vec3"));
 
     let iface = &protocol
         .interfaces
@@ -1713,44 +1720,6 @@ fn test_load_protocol_diamond_import() {
     let main_path = dir.path().join("main.gluon");
     let mut f = std::fs::File::create(&main_path).unwrap();
     write!(f, "import \"a.gluon\"\nimport \"b.gluon\"\n\n/// Main\ninterface Main {{\n    ping() -> ()\n}}\n").unwrap();
-
-    let protocol = load_protocol(&main_path).unwrap();
-    assert!(
-        protocol
-            .imported_protocols
-            .iter()
-            .any(|(name, _)| name == "a")
-    );
-    assert!(
-        protocol
-            .imported_protocols
-            .iter()
-            .any(|(name, _)| name == "b")
-    );
-
-    // Both a and b should have resolved their shared import
-    let a = &protocol
-        .imported_protocols
-        .iter()
-        .find(|(name, _)| name == "a")
-        .unwrap()
-        .1;
-    assert!(
-        a.imported_protocols
-            .iter()
-            .any(|(name, _)| name == "shared")
-    );
-    let b = &protocol
-        .imported_protocols
-        .iter()
-        .find(|(name, _)| name == "b")
-        .unwrap()
-        .1;
-    assert!(
-        b.imported_protocols
-            .iter()
-            .any(|(name, _)| name == "shared")
-    );
 }
 
 #[test]
@@ -1763,7 +1732,6 @@ fn test_parse_no_imports() {
     "#;
     let protocol = parse_idl("Test", input).unwrap();
     assert!(protocol.imports.is_empty());
-    assert!(protocol.imported_protocols.is_empty());
 }
 
 // #[test]
@@ -1787,7 +1755,6 @@ fn test_empty_interface() {
         Protocol {
             name: "Empty".to_string(),
             imports: vec![],
-            imported_protocols: Vec::new(),
             interfaces: Vec::from([(
                 "Empty".to_string(),
                 Interface {

@@ -1,7 +1,24 @@
 #![allow(unused, clippy::single_match, clippy::match_single_binding)]
 use gluon_wire::GluonConvertable;
+pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::ExternalGluonProtocol {
+    protocol_name: "test",
+    types: &[
+        gluon_wire::ExternalGluonType {
+            name: "TestStruct",
+            supported_traits: &["Clone"],
+        },
+        gluon_wire::ExternalGluonType {
+            name: "Vec3",
+            supported_traits: &["Copy", "Clone", "Hash", "PartialEq", "Eq"],
+        },
+        gluon_wire::ExternalGluonType {
+            name: "TestEnum",
+            supported_traits: &[],
+        },
+    ],
+};
 ///test struct
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct TestStruct {
     pub string: String,
     pub id: u64,
@@ -36,6 +53,41 @@ impl gluon_wire::GluonConvertable for TestStruct {
         self.string.write_owned(data)?;
         self.id.write_owned(data)?;
         self.binder_ref.write_owned(data)?;
+        Ok(())
+    }
+}
+///test struct
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct Vec3 {
+    pub x: u32,
+    pub y: u32,
+    pub z: u32,
+}
+impl gluon_wire::GluonConvertable for Vec3 {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut gluon_wire::GluonDataBuilder<'a>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        self.x.write(data)?;
+        self.y.write(data)?;
+        self.z.write(data)?;
+        Ok(())
+    }
+    fn read(
+        data: &mut gluon_wire::GluonDataReader,
+    ) -> Result<Self, gluon_wire::GluonReadError> {
+        let x = gluon_wire::GluonConvertable::read(data)?;
+        let y = gluon_wire::GluonConvertable::read(data)?;
+        let z = gluon_wire::GluonConvertable::read(data)?;
+        Ok(Vec3 { x, y, z })
+    }
+    fn write_owned(
+        self,
+        data: &mut gluon_wire::GluonDataBuilder<'_>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        self.x.write_owned(data)?;
+        self.y.write_owned(data)?;
+        self.z.write_owned(data)?;
         Ok(())
     }
 }

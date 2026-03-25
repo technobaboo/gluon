@@ -305,3 +305,15 @@ pub struct GluonCtx {
     pub sender_pid: RawPid,
     pub sender_euid: RawUid,
 }
+
+
+#[derive(Clone, Copy, Debug)]
+pub struct ExternalGluonProtocol {
+    pub protocol_name: &'static str,
+    pub types: &'static [ExternalGluonType],
+}
+#[derive(Clone, Copy, Debug)]
+pub struct ExternalGluonType {
+    pub name: &'static str,
+    pub supported_traits: &'static [&'static str],
+}
