@@ -306,7 +306,6 @@ pub struct GluonCtx {
     pub sender_euid: RawUid,
 }
 
-
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Derives: u32 {

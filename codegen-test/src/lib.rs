@@ -35,11 +35,7 @@ impl TestHandler for TestHandlerImpl {
         input
     }
 
-    async fn echo_ref(
-        &self,
-        _ctx: GluonCtx,
-        input: protocol::test::Test,
-    ) -> protocol::test::Test {
+    async fn echo_ref(&self, _ctx: GluonCtx, input: protocol::test::Test) -> protocol::test::Test {
         input
     }
 
