@@ -1434,6 +1434,13 @@ fn load_protocol_inner(
         }
     }
 
+    // Recursively load imported protocols
+    let parent_dir = canonical.parent().unwrap_or(Path::new("."));
+    for import in &protocol.imports {
+        let import_path = parent_dir.join(&import.name);
+        load_protocol_inner(&import_path, seen, cache)?;
+    }
+
     seen.remove(&canonical);
     cache.insert(canonical, protocol.clone());
     Ok(protocol)
