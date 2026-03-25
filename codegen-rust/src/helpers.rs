@@ -4,12 +4,15 @@ use convert_case::{Case, Casing};
 use gluon_parser::parse_idl;
 use quote::{format_ident, quote};
 
+use gluon_wire::Derives;
+
 use crate::{ExternalProtocol, LocalProtocol, gen_module};
 
 /// Generates all modules into one large file with one inline rust module for each gluon module
 pub fn gen_multiple_modules(
     modules: &[(&'static str, &Path)],
     external_protocols: &[&ExternalProtocol],
+    requested_derives: Derives,
     output_rust_module: &'static str,
     output_file_path: impl AsRef<Path>,
 ) {
@@ -38,7 +41,7 @@ pub fn gen_multiple_modules(
             .filter(|v| v.0 != *name)
             .map(|v| &v.1)
             .collect::<Vec<_>>();
-        let module = gen_module(proto, &other_mods, external_protocols);
+        let module = gen_module(proto, &other_mods, external_protocols, requested_derives);
         let name = format_ident!("{}", name.to_case(Case::Snake));
         quote! {
             pub mod #name {
@@ -55,6 +58,7 @@ pub fn gen_multiple_modules(
 pub fn gen_single_module(
     mod_name: &'static str,
     mod_path: impl AsRef<Path>,
+    requested_derives: Derives,
     output_file_path: impl AsRef<Path>,
 ) {
     println!(
@@ -74,6 +78,7 @@ pub fn gen_single_module(
         },
         &[],
         &[],
+        requested_derives,
     );
 
     let str = prettyplease::unparse(&syn::parse2(module).unwrap());

@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use convert_case::{Case, Casing};
 use gluon_parser::{CustomType, EnumDef, Field, Interface, Protocol, StructDef, Type};
-use gluon_wire::ExternalGluonProtocol;
+use gluon_wire::{Derives, ExternalGluonProtocol};
 use quote::{format_ident, quote};
 
 pub mod helpers;
@@ -36,17 +36,22 @@ pub struct GenCtx<'a> {
     pub curr_protocol: &'a LocalProtocol,
     pub other_local_protocols: &'a [&'a LocalProtocol],
     pub external_protocols: &'a [&'a ExternalProtocol],
+    /// Which derives to attempt on generated structs/enums. A derive is only
+    /// applied if every field/variant member supports it.
+    pub requested_derives: Derives,
 }
 
 pub fn gen_module(
     proto: &LocalProtocol,
     other_local_protocols: &[&LocalProtocol],
     external_protocols: &[&ExternalProtocol],
+    requested_derives: Derives,
 ) -> proc_macro2::TokenStream {
     let gen_ctx = &GenCtx {
         curr_protocol: proto,
         other_local_protocols,
         external_protocols,
+        requested_derives,
     };
     let interfaces = proto
         .interfaces
@@ -84,10 +89,11 @@ pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream
                 .map(|(name, v)| (name.clone(), enum_supported_derives(v, gen_ctx))),
         )
         .map(|(name, derives)| {
+            let bits = derives.bits();
             quote! {
                 gluon_wire::ExternalGluonType {
                     name: #name,
-                    supported_traits: &[#(#derives),*]
+                    supported_derives: gluon_wire::Derives::from_bits_truncate(#bits)
                 }
             }
         });
@@ -367,9 +373,7 @@ pub fn gen_interface(
 pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     let fields = def.fields.iter().map(|f| gen_field_struct(f, gen_ctx));
     let name = def.name.to_case(Case::Pascal);
-    let derives = struct_supported_derives(def, gen_ctx)
-        .into_iter()
-        .map(|der| format_ident!("{}", der));
+    let derives = derives_to_tokens(struct_supported_derives(def, gen_ctx));
     let name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
@@ -431,9 +435,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
         }
     });
     let name = def.name.to_case(Case::Pascal);
-    let derives = enum_supported_derives(def, gen_ctx)
-        .into_iter()
-        .map(|der| format_ident!("{}", der));
+    let derives = derives_to_tokens(enum_supported_derives(def, gen_ctx));
     let enum_name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
@@ -646,26 +648,24 @@ pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     }
 }
 
-fn struct_supported_derives(def: &StructDef, gen_ctx: &GenCtx) -> Vec<&'static str> {
+fn struct_supported_derives(def: &StructDef, gen_ctx: &GenCtx) -> Derives {
     def.fields
         .iter()
         .map(|f| supported_derives(&f.ty, gen_ctx))
-        .reduce(union_derives)
-        .unwrap_or_else(Vec::new)
+        .fold(gen_ctx.requested_derives, |acc, d| acc & d)
 }
-fn enum_supported_derives(def: &EnumDef, gen_ctx: &GenCtx) -> Vec<&'static str> {
+
+fn enum_supported_derives(def: &EnumDef, gen_ctx: &GenCtx) -> Derives {
     def.variants
         .iter()
         .flat_map(|v| v.fields.iter())
         .map(|f| supported_derives(&f.ty, gen_ctx))
-        .reduce(union_derives)
-        .unwrap_or_else(Vec::new)
+        .fold(gen_ctx.requested_derives, |acc, d| acc & d)
 }
 
-// TODO: expose primitive derives so implementations can add custom derives like serde
-// TODO: make sure this only returns known derives, else adding custom derives in externally
-// generated protocols can break dependents
-pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Vec<&'static str> {
+/// Returns which of the requested derives this type can support.
+pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Derives {
+    let requested = gen_ctx.requested_derives;
     match def {
         Type::Bool
         | Type::U8
@@ -675,38 +675,25 @@ pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Vec<&'static str> {
         | Type::I8
         | Type::I16
         | Type::I32
-        | Type::I64 => vec!["Copy", "Clone", "Hash", "PartialEq", "Eq"],
-        Type::F32 | Type::F64 => vec!["Copy", "Clone", "PartialEq"],
-        Type::String => vec!["Clone", "Hash", "PartialEq", "Eq"],
-        // i don't think OwnedFd implements any derivable traits? (other that Debug)
-        Type::Fd => vec![],
-        Type::Ref(_) => vec!["Clone"],
+        | Type::I64 => requested & Derives::INTEGERS,
+        Type::F32 | Type::F64 => requested & Derives::FLOATS,
+        Type::String => requested & (Derives::CLONE | Derives::HASH | Derives::PARTIAL_EQ | Derives::EQ | Derives::PARTIAL_ORD | Derives::ORD | Derives::DEFAULT),
+        // OwnedFd doesn't implement any derivable traits (other than Debug)
+        Type::Fd => Derives::empty(),
+        Type::Ref(_) => requested & Derives::CLONE,
         Type::Custom(custom) => custom_type_derives(custom, gen_ctx),
         Type::Array(v, _) => supported_derives(v, gen_ctx),
-        Type::Vec(v) => supported_derives(v, gen_ctx)
-            .into_iter()
-            .filter(|v| *v != "Copy")
-            .collect(),
+        Type::Vec(v) => supported_derives(v, gen_ctx) - Derives::COPY,
         Type::Set(v) => supported_derives(v, gen_ctx),
         Type::Option(v) => supported_derives(v, gen_ctx),
         // TODO: figure out correct semantics
-        Type::Result(_, _) => vec![],
+        Type::Result(_, _) => Derives::empty(),
         // TODO: figure out correct semantics
-        Type::Map(_, _) => vec![],
+        Type::Map(_, _) => Derives::empty(),
     }
 }
 
-fn union_derives(derives_1: Vec<&'static str>, derives_2: Vec<&'static str>) -> Vec<&'static str> {
-    let mut out = Vec::new();
-    for derive in derives_1 {
-        if derives_2.contains(&derive) {
-            out.push(derive);
-        }
-    }
-    out
-}
-
-fn custom_type_derives(custom: &CustomType, gen_ctx: &GenCtx) -> Vec<&'static str> {
+fn custom_type_derives(custom: &CustomType, gen_ctx: &GenCtx) -> Derives {
     match custom {
         CustomType::Named(name) => derives_from_protocol(name, gen_ctx),
         CustomType::Qualified(namespace, type_name) => {
@@ -740,13 +727,12 @@ fn custom_type_derives(custom: &CustomType, gen_ctx: &GenCtx) -> Vec<&'static st
                 .iter()
                 .find(|v| v.name == type_name)
                 .unwrap_or_else(|| panic!("unknown type: {type_name}"))
-                .supported_traits
-                .to_vec()
+                .supported_derives
         }
     }
 }
 
-fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str> {
+fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
     gen_ctx
         .curr_protocol
         .enums
@@ -755,8 +741,9 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str>
         .and_then(|(_, v)| {
             v.variants
                 .iter()
-                .flat_map(|v| v.fields.iter().map(|v| supported_derives(&v.ty, gen_ctx)))
-                .reduce(union_derives)
+                .flat_map(|v| v.fields.iter())
+                .map(|v| supported_derives(&v.ty, gen_ctx))
+                .reduce(|a, b| a & b)
         })
         .or_else(|| {
             gen_ctx
@@ -768,7 +755,7 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str>
                     v.fields
                         .iter()
                         .map(|v| supported_derives(&v.ty, gen_ctx))
-                        .reduce(union_derives)
+                        .reduce(|a, b| a & b)
                 })
         })
         .or_else(|| {
@@ -777,7 +764,21 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str>
                 .interfaces
                 .iter()
                 .find(|(name, _)| name == type_name)
-                .map(|_| vec!["Clone"])
+                .map(|_| gen_ctx.requested_derives & Derives::CLONE)
         })
+        // for types with no fields, they support all requested derives
         .unwrap_or_else(|| panic!("unknown type: {type_name}"))
+}
+
+fn derives_to_tokens(derives: Derives) -> Vec<proc_macro2::Ident> {
+    let mut out = Vec::new();
+    if derives.contains(Derives::COPY) { out.push(format_ident!("Copy")); }
+    if derives.contains(Derives::CLONE) { out.push(format_ident!("Clone")); }
+    if derives.contains(Derives::HASH) { out.push(format_ident!("Hash")); }
+    if derives.contains(Derives::PARTIAL_EQ) { out.push(format_ident!("PartialEq")); }
+    if derives.contains(Derives::EQ) { out.push(format_ident!("Eq")); }
+    if derives.contains(Derives::PARTIAL_ORD) { out.push(format_ident!("PartialOrd")); }
+    if derives.contains(Derives::ORD) { out.push(format_ident!("Ord")); }
+    if derives.contains(Derives::DEFAULT) { out.push(format_ident!("Default")); }
+    out
 }

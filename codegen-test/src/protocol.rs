@@ -5,15 +5,15 @@ pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::Ext
     types: &[
         gluon_wire::ExternalGluonType {
             name: "TestStruct",
-            supported_traits: &["Clone"],
+            supported_derives: gluon_wire::Derives::from_bits_truncate(2u32),
         },
         gluon_wire::ExternalGluonType {
             name: "Vec3",
-            supported_traits: &["Copy", "Clone", "Hash", "PartialEq", "Eq"],
+            supported_derives: gluon_wire::Derives::from_bits_truncate(30u32),
         },
         gluon_wire::ExternalGluonType {
             name: "TestEnum",
-            supported_traits: &[],
+            supported_derives: gluon_wire::Derives::from_bits_truncate(0u32),
         },
     ],
 };
@@ -57,7 +57,7 @@ impl gluon_wire::GluonConvertable for TestStruct {
     }
 }
 ///test struct
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Vec3 {
     pub x: u32,
     pub y: u32,
