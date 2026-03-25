@@ -27,25 +27,27 @@ pub fn gen_multiple_modules(
                 .file_name()
                 .and_then(|f| f.to_str())
                 .expect("gluon module path must have a valid filename");
+            let mod_name = name.to_case(Case::Snake);
             (
                 *name,
                 LocalProtocol {
-                    rust_module: format!("{output_rust_module}::{name}"),
+                    rust_module: format!("{output_rust_module}::{mod_name}"),
                     protocol: parse_idl(gluon_filename, &proto_str).unwrap(),
                 },
+                mod_name,
             )
         })
         .collect::<Vec<_>>();
-    let modules = modules.iter().map(|(name, proto)| {
+    let modules = modules.iter().map(|(name, proto, mod_name)| {
         let other_mods = modules
             .iter()
             .filter(|v| v.0 != *name)
             .map(|v| &v.1)
             .collect::<Vec<_>>();
         let module = gen_module(proto, &other_mods, external_protocols, requested_derives);
-        let name = format_ident!("{}", name.to_case(Case::Snake));
+        let mod_ident = format_ident!("{}", mod_name);
         quote! {
-            pub mod #name {
+            pub mod #mod_ident {
                 #module
             }
         }

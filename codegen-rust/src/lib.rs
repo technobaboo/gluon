@@ -587,14 +587,14 @@ pub fn gen_custom_type(custom: &CustomType, gen_ctx: &GenCtx) -> proc_macro2::To
                 .iter()
                 .find(|v| v.name == import.name)
             {
-                // Local protocols are sibling modules, so use super:: with the last
-                // segment of the rust_module path as the module name
-                let mod_name = local
-                    .rust_module
-                    .rsplit("::")
-                    .next()
-                    .expect("rust_module should have at least one segment");
-                let mod_ident = format_ident!("{}", mod_name);
+                let mod_ident = format_ident!(
+                    "{}",
+                    local
+                        .rust_module
+                        .rsplit("::")
+                        .next()
+                        .expect("rust_module should have at least one segment")
+                );
                 return quote! {super::#mod_ident::#name};
             }
             // Fall back to external protocols (fully qualified paths)

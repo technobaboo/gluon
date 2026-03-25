@@ -8,15 +8,12 @@ fn main() {
         &[
             (
                 "types",
-                Path::new("./gluon-binder-src/org.stardustxr.gluon.types.gluon"),
+                Path::new("./gluon-binder-src/org.gluon.Types.gluon"),
             ),
-            (
-                "test",
-                Path::new("./gluon-binder-src/org.stardustxr.gluon.test.gluon"),
-            ),
+            ("test", Path::new("./gluon-binder-src/org.gluon.Test.gluon")),
         ],
         &[],
-        Derives::CLONE | Derives::PARTIAL_EQ | Derives::EQ | Derives::HASH,
+        Derives::all(),
         "protocol",
         "./src/protocol.rs",
     );
