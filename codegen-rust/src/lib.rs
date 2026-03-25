@@ -754,13 +754,21 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Vec<&'static str>
                 .curr_protocol
                 .structs
                 .iter()
-                .find(|(n, _)| dbg!(n) == type_name)
+                .find(|(n, _)| n == type_name)
                 .and_then(|(_, v)| {
                     v.fields
                         .iter()
                         .map(|v| supported_derives(&v.ty, gen_ctx))
                         .reduce(union_derives)
                 })
+        })
+        .or_else(|| {
+            gen_ctx
+                .curr_protocol
+                .interfaces
+                .iter()
+                .find(|(name, _)| name == type_name)
+                .map(|_| vec!["Clone"])
         })
         .expect(&format!("unknown type: {type_name}"))
 }
