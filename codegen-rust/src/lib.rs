@@ -580,21 +580,31 @@ pub fn gen_custom_type(custom: &CustomType, gen_ctx: &GenCtx) -> proc_macro2::To
                 .iter()
                 .find(|v| &v.alias == namespace)
                 .expect("unknown namespace used in qualified type");
-            let rust_mod = gen_ctx
+            let name = format_ident!("{}", name.to_case(Case::Pascal));
+            // Check local protocols first (sibling modules in the same output file)
+            if let Some(local) = gen_ctx
                 .other_local_protocols
                 .iter()
                 .find(|v| v.name == import.name)
-                .map(|v| v.rust_module.clone())
-                .or_else(|| {
-                    gen_ctx
-                        .external_protocols
-                        .iter()
-                        .find(|v| v.protocol_name == import.name)
-                        .map(|v| v.rust_module.to_string())
-                })
+            {
+                // Local protocols are sibling modules, so use super:: with the last
+                // segment of the rust_module path as the module name
+                let mod_name = local
+                    .rust_module
+                    .rsplit("::")
+                    .next()
+                    .expect("rust_module should have at least one segment");
+                let mod_ident = format_ident!("{}", mod_name);
+                return quote! {super::#mod_ident::#name};
+            }
+            // Fall back to external protocols (fully qualified paths)
+            let rust_mod = gen_ctx
+                .external_protocols
+                .iter()
+                .find(|v| v.protocol_name == import.name)
+                .map(|v| v.rust_module.to_string())
                 .expect("failed to resolve namespace for qualified type");
             let namespace_path = rust_mod.split("::").map(|v| format_ident!("{}", v));
-            let name = format_ident!("{}", name.to_case(Case::Pascal));
             quote! {#(#namespace_path)::*::#name}
         }
     }

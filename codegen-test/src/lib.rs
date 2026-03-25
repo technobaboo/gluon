@@ -1,4 +1,4 @@
-use crate::protocol::TestHandler;
+use crate::protocol::test::TestHandler;
 use binderbinder::{TransactionHandler, device::Transaction, payload::PayloadBuilder};
 use gluon_wire::{GluonCtx, GluonDataReader, drop_tracking::DropNotifier};
 use std::{
@@ -26,13 +26,29 @@ impl TestHandler for TestHandlerImpl {
         c"nya~".to_owned().hash(&mut hasher);
     }
 
-    async fn echo(&self, _ctx: GluonCtx, input: protocol::TestEnum) -> protocol::TestEnum {
+    async fn echo(
+        &self,
+        _ctx: GluonCtx,
+        input: protocol::test::TestEnum,
+    ) -> protocol::test::TestEnum {
         println!("echoing: {input:?}");
         input
     }
 
-    async fn echo_ref(&self, _ctx: GluonCtx, input: protocol::Test) -> protocol::Test {
+    async fn echo_ref(
+        &self,
+        _ctx: GluonCtx,
+        input: protocol::test::Test,
+    ) -> protocol::test::Test {
         input
+    }
+
+    async fn get_position(&self, _ctx: GluonCtx) -> protocol::types::Vec3 {
+        protocol::types::Vec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
     }
 
     async fn drop_notification_requested(&self, notifier: DropNotifier) {

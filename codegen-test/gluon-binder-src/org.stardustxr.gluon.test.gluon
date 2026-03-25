@@ -1,3 +1,5 @@
+import "org.stardustxr.gluon.types.gluon" as types
+
 /// Test interface
 interface Test {
 	quit()
@@ -7,6 +9,8 @@ interface Test {
 	echo(input: TestEnum) -> (output: TestEnum)
 
 	echo_ref(input: Ref<Test>) -> (output: Ref<Test>)
+
+	get_position() -> (position: types::Vec3)
 }
 
 /// test struct
@@ -14,6 +18,7 @@ struct TestStruct {
 	string: String,
 	id: u64,
 	binder_ref: Ref<Test>,
+	position: types::Vec3,
 }
 
 /// Test enum
@@ -25,10 +30,4 @@ enum TestEnum {
 		fd: Fd,
 	},
 	EmptyVariant
-}
-/// test struct
-struct Vec3 {
-	x: u32,
-	y: u32,
-	z: u32,
 }

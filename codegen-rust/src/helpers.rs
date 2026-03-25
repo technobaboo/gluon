@@ -23,11 +23,15 @@ pub fn gen_multiple_modules(
         .iter()
         .map(|(name, path)| {
             let proto_str = fs::read_to_string(path).unwrap();
+            let gluon_filename = path
+                .file_name()
+                .and_then(|f| f.to_str())
+                .expect("gluon module path must have a valid filename");
             (
                 *name,
                 LocalProtocol {
                     rust_module: format!("{output_rust_module}::{name}"),
-                    protocol: parse_idl(name, &proto_str).unwrap(),
+                    protocol: parse_idl(gluon_filename, &proto_str).unwrap(),
                 },
             )
         })
