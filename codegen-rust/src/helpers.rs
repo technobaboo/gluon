@@ -57,7 +57,6 @@ pub fn gen_multiple_modules(
 /// Generates a module into a single rust file
 /// this assumes no imports are use in this module
 pub fn gen_single_module(
-    mod_name: &'static str,
     mod_path: impl AsRef<Path>,
     requested_derives: Derives,
     output_file_path: impl AsRef<Path>,
@@ -69,8 +68,13 @@ pub fn gen_single_module(
             .to_str()
             .expect("path can't be turned into string")
     );
-    let proto_str = fs::read_to_string(mod_path).unwrap();
-    let proto = parse_idl(mod_name, &proto_str).unwrap();
+    let proto_str = fs::read_to_string(&mod_path).unwrap();
+    let gluon_filename = mod_path
+        .as_ref()
+        .file_name()
+        .and_then(|f| f.to_str())
+        .expect("gluon module path must have a valid filename");
+    let proto = parse_idl(gluon_filename, &proto_str).unwrap();
     let module = gen_module(
         &LocalProtocol {
             // this should only matter when getting imported by a local module
