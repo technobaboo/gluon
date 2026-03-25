@@ -1,5 +1,7 @@
+use ansi_term::{Color, Style};
 use chumsky::{prelude::*, text::keyword};
 use convert_case::{Case, Casing};
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +115,12 @@ impl std::fmt::Debug for ParseError {
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let color = std::io::stderr().is_terminal();
+        let red = if color { Color::Red.bold() } else { Style::new() };
+        let blue = if color { Color::Blue.bold() } else { Style::new() };
+        let white_bold = if color { Style::new().bold() } else { Style::new() };
+        let pipe = blue.paint("|");
+
         for (i, entry) in self.errors.iter().enumerate() {
             if i > 0 {
                 writeln!(f)?;
@@ -121,7 +129,6 @@ impl std::fmt::Display for ParseError {
             let line_num = entry.line.to_string();
             let gutter = line_num.len();
 
-            // header: "error: found 'x', expected ..."
             let expected = if entry.expected.is_empty() {
                 "something else".to_string()
             } else if entry.expected.len() == 1 {
@@ -130,23 +137,45 @@ impl std::fmt::Display for ParseError {
                 let (last, rest) = entry.expected.split_last().unwrap();
                 format!("{} or {last}", rest.join(", "))
             };
-            writeln!(f, "error: unexpected {}, expected {expected}", entry.found)?;
 
-            // location line: " --> file:line:col"
+            // header
             writeln!(
                 f,
-                "{:>gutter$}--> {}:{}:{}",
-                " ", self.file, entry.line, entry.col
+                "{}: unexpected {}, expected {expected}",
+                red.paint("error"),
+                white_bold.paint(entry.found.as_str()),
+            )?;
+
+            // location
+            writeln!(
+                f,
+                "{:>gutter$}{} {}:{}:{}",
+                " ",
+                blue.paint("-->"),
+                self.file,
+                entry.line,
+                entry.col
             )?;
 
             // blank gutter
-            writeln!(f, "{:>gutter$} |", " ")?;
+            writeln!(f, "{:>gutter$} {pipe}", " ")?;
 
             // source line
-            writeln!(f, "{line_num} | {}", entry.source_line)?;
+            writeln!(
+                f,
+                "{} {pipe} {}",
+                blue.paint(line_num.as_str()),
+                entry.source_line
+            )?;
 
             // caret
-            write!(f, "{:>gutter$} | {:>col$}", " ", "^", col = entry.col)?;
+            write!(
+                f,
+                "{:>gutter$} {pipe} {:>width$}",
+                " ",
+                red.paint("^"),
+                width = entry.col
+            )?;
         }
         Ok(())
     }

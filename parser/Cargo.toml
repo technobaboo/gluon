@@ -7,6 +7,7 @@ edition.workspace = true
 binderbinder.workspace = true
 chumsky = "0.12.0"
 convert_case = "0.11.0"
+ansi_term = "0.12"
 
 [dev-dependencies]
 tempfile = "3"
