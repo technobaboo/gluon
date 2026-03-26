@@ -242,6 +242,9 @@ pub fn gen_interface(
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
                 quote! {#name.write(&mut builder)?;}
             }).collect::<Vec<_>>();
+            let param_names = method.params.iter().map(|param| {
+                format_ident!("{}", param.name.to_case(Case::Snake))
+            }).collect::<Vec<_>>();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
             let return_types = method
@@ -270,14 +273,10 @@ pub fn gen_interface(
                     quote! {
                         #doc_comment
                         pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
-                            let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(&self.obj);
-                            tokio::task::spawn_blocking(move || {
-                                let mut builder = gluon_wire::GluonDataBuilder::new();
-                                #(#params_write)*
-                                let reader = obj.device().transact_blocking(&obj, #i, builder.to_payload())?.1;
-                                let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
-                                Ok(#return_tuple)
-                            }).await.unwrap()
+                            let this = self.clone();
+                            tokio::task::spawn_blocking(move ||
+                                this.#blocking_name(#(#param_names),*)
+                            ).await.unwrap()
                         }
                         pub fn #blocking_name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
                             let mut builder = gluon_wire::GluonDataBuilder::new();

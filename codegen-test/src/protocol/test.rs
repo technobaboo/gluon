@@ -160,20 +160,8 @@ impl Test {
         Ok(())
     }
     pub async fn ping(&self) -> Result<(), gluon_wire::GluonSendError> {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.obj,
-        );
-        tokio::task::spawn_blocking(move || {
-                let mut builder = gluon_wire::GluonDataBuilder::new();
-                let reader = obj
-                    .device()
-                    .transact_blocking(&obj, 9u32, builder.to_payload())?
-                    .1;
-                let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
-                Ok(())
-            })
-            .await
-            .unwrap()
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.ping_blocking()).await.unwrap()
     }
     pub fn ping_blocking(&self) -> Result<(), gluon_wire::GluonSendError> {
         let mut builder = gluon_wire::GluonDataBuilder::new();
@@ -189,21 +177,8 @@ impl Test {
         &self,
         input: TestEnum,
     ) -> Result<TestEnum, gluon_wire::GluonSendError> {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.obj,
-        );
-        tokio::task::spawn_blocking(move || {
-                let mut builder = gluon_wire::GluonDataBuilder::new();
-                input.write(&mut builder)?;
-                let reader = obj
-                    .device()
-                    .transact_blocking(&obj, 10u32, builder.to_payload())?
-                    .1;
-                let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
-                Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
-            })
-            .await
-            .unwrap()
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.echo_blocking(input)).await.unwrap()
     }
     pub fn echo_blocking(
         &self,
@@ -223,21 +198,8 @@ impl Test {
         &self,
         input: Test,
     ) -> Result<Test, gluon_wire::GluonSendError> {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.obj,
-        );
-        tokio::task::spawn_blocking(move || {
-                let mut builder = gluon_wire::GluonDataBuilder::new();
-                input.write(&mut builder)?;
-                let reader = obj
-                    .device()
-                    .transact_blocking(&obj, 11u32, builder.to_payload())?
-                    .1;
-                let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
-                Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
-            })
-            .await
-            .unwrap()
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.echo_ref_blocking(input)).await.unwrap()
     }
     pub fn echo_ref_blocking(
         &self,
@@ -256,20 +218,8 @@ impl Test {
     pub async fn get_position(
         &self,
     ) -> Result<super::types::Vec3, gluon_wire::GluonSendError> {
-        let obj = binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-            &self.obj,
-        );
-        tokio::task::spawn_blocking(move || {
-                let mut builder = gluon_wire::GluonDataBuilder::new();
-                let reader = obj
-                    .device()
-                    .transact_blocking(&obj, 12u32, builder.to_payload())?
-                    .1;
-                let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
-                Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
-            })
-            .await
-            .unwrap()
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.get_position_blocking()).await.unwrap()
     }
     pub fn get_position_blocking(
         &self,
