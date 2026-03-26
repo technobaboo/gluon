@@ -2,17 +2,19 @@ use crate::{ExternalProtocol, LocalProtocol, gen_module};
 use convert_case::{Case, Casing};
 use gluon_parser::parse_idl;
 use gluon_wire::Derives;
-use quote::{format_ident, quote};
 use std::{fs, path::Path};
 
-/// Generates all modules into one large file with one inline rust module for each gluon module
+/// Generates each module into a separate file within a folder, with a `mod.rs` re-exporting all modules
 pub fn gen_multiple_modules(
     modules: &[(&'static str, &Path)],
     external_protocols: &[&ExternalProtocol],
     requested_derives: Derives,
     output_rust_module: &'static str,
-    output_file_path: impl AsRef<Path>,
+    output_dir: impl AsRef<Path>,
 ) {
+    let output_dir = output_dir.as_ref();
+    fs::create_dir_all(output_dir).unwrap();
+
     for (_, path) in modules {
         println!(
             "cargo:rerun-if-changed={}",
@@ -38,23 +40,26 @@ pub fn gen_multiple_modules(
             )
         })
         .collect::<Vec<_>>();
-    let modules = modules.iter().map(|(name, proto, mod_name)| {
+
+    let mut mod_names = Vec::new();
+    for (name, proto, mod_name) in &modules {
         let other_mods = modules
             .iter()
-            .filter(|v| v.0 != *name)
+            .filter(|v| &v.0 != name)
             .map(|v| &v.1)
             .collect::<Vec<_>>();
         let module = gen_module(proto, &other_mods, external_protocols, requested_derives);
-        let mod_ident = format_ident!("{}", mod_name);
-        quote! {
-            pub mod #mod_ident {
-                #module
-            }
-        }
-    });
+        let str = prettyplease::unparse(&syn::parse2(module).unwrap());
+        fs::write(output_dir.join(format!("{mod_name}.rs")), str).unwrap();
+        mod_names.push(mod_name.clone());
+    }
 
-    let str = prettyplease::unparse(&syn::parse2(quote! {#(#modules)*}).unwrap());
-    fs::write(output_file_path, str).unwrap();
+    // Generate mod.rs with pub mod declarations
+    let mod_decls: String = mod_names
+        .iter()
+        .map(|name| format!("pub mod {name};\n"))
+        .collect();
+    fs::write(output_dir.join("mod.rs"), mod_decls).unwrap();
 }
 /// Generates a module into a single rust file
 /// this assumes no imports are use in this module

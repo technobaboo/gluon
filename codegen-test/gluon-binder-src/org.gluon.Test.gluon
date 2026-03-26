@@ -1,4 +1,4 @@
-import "org.stardustxr.gluon.types.gluon" as types
+import "org.gluon.Types.gluon" as types
 
 /// Test interface
 interface Test {
