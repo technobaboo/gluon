@@ -9,7 +9,6 @@ pub fn gen_multiple_modules(
     modules: &[(&'static str, &Path)],
     external_protocols: &[&ExternalProtocol],
     requested_derives: Derives,
-    output_rust_module: &'static str,
     output_dir: impl AsRef<Path>,
 ) {
     let output_dir = output_dir.as_ref();
@@ -33,7 +32,7 @@ pub fn gen_multiple_modules(
             (
                 *name,
                 LocalProtocol {
-                    rust_module: format!("{output_rust_module}::{mod_name}"),
+                    rust_module: format!("super::{mod_name}"),
                     protocol: parse_idl(gluon_filename, &proto_str).unwrap(),
                 },
                 mod_name,
