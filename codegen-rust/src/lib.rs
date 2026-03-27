@@ -747,13 +747,14 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
         .curr_protocol
         .enums
         .iter()
-        .find(|(n, _)| n == type_name)
-        .and_then(|(_, v)| {
+        .find(|(n, _)| dbg!(n) == dbg!(type_name))
+        .map(|(_, v)| {
             v.variants
                 .iter()
                 .flat_map(|v| v.fields.iter())
                 .map(|v| supported_derives(&v.ty, gen_ctx))
                 .reduce(|a, b| a & b)
+                .unwrap_or(gen_ctx.requested_derives)
         })
         .or_else(|| {
             gen_ctx
@@ -761,11 +762,12 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
                 .structs
                 .iter()
                 .find(|(n, _)| n == type_name)
-                .and_then(|(_, v)| {
+                .map(|(_, v)| {
                     v.fields
                         .iter()
                         .map(|v| supported_derives(&v.ty, gen_ctx))
                         .reduce(|a, b| a & b)
+                        .unwrap_or(gen_ctx.requested_derives)
                 })
         })
         .or_else(|| {
