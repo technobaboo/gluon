@@ -1,4 +1,4 @@
-import "org.gluon.Types.gluon" as types
+import "org.gluon.Types" as types
 
 /// Test interface
 interface Test {

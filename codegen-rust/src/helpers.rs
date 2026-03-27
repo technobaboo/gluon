@@ -25,7 +25,7 @@ pub fn gen_multiple_modules(
         .map(|(name, path)| {
             let proto_str = fs::read_to_string(path).unwrap();
             let gluon_filename = path
-                .file_name()
+                .file_stem()
                 .and_then(|f| f.to_str())
                 .expect("gluon module path must have a valid filename");
             let mod_name = name.to_case(Case::Snake);
@@ -77,7 +77,7 @@ pub fn gen_single_module(
     let proto_str = fs::read_to_string(&mod_path).unwrap();
     let gluon_filename = mod_path
         .as_ref()
-        .file_name()
+        .file_stem()
         .and_then(|f| f.to_str())
         .expect("gluon module path must have a valid filename");
     let proto = parse_idl(gluon_filename, &proto_str).unwrap();
