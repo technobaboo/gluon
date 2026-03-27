@@ -747,7 +747,7 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
         .curr_protocol
         .enums
         .iter()
-        .find(|(n, _)| dbg!(n) == dbg!(type_name))
+        .find(|(n, _)| n == type_name)
         .map(|(_, v)| {
             v.variants
                 .iter()
