@@ -290,9 +290,9 @@ pub fn gen_interface(
                 None => quote! {
                     #doc_comment
                     pub fn #name(&self, #(#params),*) -> Result<(), gluon_wire::GluonSendError> {
-                        let mut builder = gluon_wire::GluonDataBuilder::new();
+                        let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
                         #(#params_write)*
-                        self.obj.device().transact_one_way(&self.obj, #i, builder.to_payload())?;
+                        self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
                         Ok(())
                     }
                 },
@@ -330,9 +330,9 @@ pub fn gen_interface(
                 #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
                 pub fn from_object_or_ref(obj: binderbinder::binder_object::BinderObjectOrRef) -> #name {
                     let drop_notification = obj.device().register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new());
-                    let mut builder = gluon_wire::GluonDataBuilder::new();
-                    builder.write_binder(&drop_notification);
-                    _ = obj.device().transact_one_way(&obj, 4, builder.to_payload());
+                    let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
+                    gluon_builder.write_binder(&drop_notification);
+                    _ = obj.device().transact_one_way(&obj, 4, gluon_builder.to_payload());
                     #name {
                         obj,
                         drop_notification,
