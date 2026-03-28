@@ -630,12 +630,12 @@ pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
         }
         Type::Set(type_def) => {
             let type_def = gen_type(type_def, gen_ctx);
-            quote! {std::collections::hash::HashSet<#type_def>}
+            quote! {std::collections::HashSet<#type_def>}
         }
         Type::Map(key, value) => {
             let key = gen_type(key, gen_ctx);
             let value = gen_type(value, gen_ctx);
-            quote! {std::collections::hash::HashMap<#key,#value>}
+            quote! {std::collections::HashMap<#key,#value>}
         }
         Type::Option(type_def) => {
             let type_def = gen_type(type_def, gen_ctx);
