@@ -124,7 +124,7 @@ pub fn gen_interface(
                 let params = method
                     .params
                     .iter()
-                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data)?});
+                    .map(|_| quote! {gluon_wire::GluonConvertable::read(gluon_data)?});
                 let name = format_ident!("{}", method.name.to_case(Case::Snake));
                 let return_names = method
                     .returns
@@ -153,7 +153,7 @@ pub fn gen_interface(
                 let params = method
                     .params
                     .iter()
-                    .map(|_| quote! {gluon_wire::GluonConvertable::read(data)?});
+                    .map(|_| quote! {gluon_wire::GluonConvertable::read(gluon_data)?});
                 let name = format_ident!("{}", method.name.to_case(Case::Snake));
                 let i = i as u32;
                 quote! {
@@ -203,7 +203,7 @@ pub fn gen_interface(
                 #(#methods)*
 
                 fn drop_notification_requested(&self, notifier: gluon_wire::drop_tracking::DropNotifier) -> impl Future<Output=()> + Send + Sync;
-                fn dispatch_two_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_two_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         let mut out = gluon_wire::GluonDataBuilder::new();
                         match transaction_code {
@@ -213,11 +213,11 @@ pub fn gen_interface(
                         Ok(out)
                     }
                 }
-                fn dispatch_one_way(&self, transaction_code: u32, data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_one_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         match transaction_code {
                             4 => {
-                                let Ok(obj) = data.read_binder() else { return Ok(()); };
+                                let Ok(obj) = gluon_data.read_binder() else { return Ok(()); };
                                 self.drop_notification_requested(gluon_wire::drop_tracking::DropNotifier::new(&obj)).await;
                             }
                             #(#oneway_methods_dispatch)*
@@ -240,7 +240,7 @@ pub fn gen_interface(
             }).collect::<Vec<_>>();
             let params_write = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! {#name.write(&mut builder)?;}
+                quote! {#name.write(&mut gluon_builder)?;}
             }).collect::<Vec<_>>();
             let param_names = method.params.iter().map(|param| {
                 format_ident!("{}", param.name.to_case(Case::Snake))
@@ -279,9 +279,9 @@ pub fn gen_interface(
                             ).await.unwrap()
                         }
                         pub fn #blocking_name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
-                            let mut builder = gluon_wire::GluonDataBuilder::new();
+                            let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
                             #(#params_write)*
-                            let reader = self.obj.device().transact_blocking(&self.obj, #i, builder.to_payload())?.1;
+                            let reader = self.obj.device().transact_blocking(&self.obj, #i, gluon_builder.to_payload())?.1;
                             let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
                             Ok(#return_tuple)
                         }
@@ -308,18 +308,18 @@ pub fn gen_interface(
             impl gluon_wire::GluonConvertable for #name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
-                    data: &mut gluon_wire::GluonDataBuilder<'a>,
+                    gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
                 ) -> Result<(), gluon_wire::GluonWriteError> {
-                    self.obj.write(data)
+                    self.obj.write(gluon_data)
                 }
 
-                fn read(data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
-                    let obj = binderbinder::binder_object::BinderObjectOrRef::read(data)?;
+                fn read(gluon_data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                    let obj = binderbinder::binder_object::BinderObjectOrRef::read(gluon_data)?;
                     Ok(#name::from_object_or_ref(obj))
                 }
 
-                fn write_owned(self, data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
-                    self.obj.write_owned(data)
+                fn write_owned(self, gluon_data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                    self.obj.write_owned(gluon_data)
                 }
             }
             impl #name {
@@ -386,19 +386,19 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
             impl gluon_wire::GluonConvertable for #name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
-                    data: &mut gluon_wire::GluonDataBuilder<'a>,
+                    gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
                 ) -> Result<(), gluon_wire::GluonWriteError> {
-                    #(self.#field_names.write(data)?;)*
+                    #(self.#field_names.write(gluon_data)?;)*
                     Ok(())
                 }
 
-                fn read(data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
-                    #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
+                fn read(gluon_data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                    #(let #field_names = gluon_wire::GluonConvertable::read(gluon_data)?;)*
                     Ok(#name {#(#field_names,)*})
                 }
 
-                fn write_owned(self, data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
-                    #(self.#field_names.write_owned(data)?;)*
+                fn write_owned(self, gluon_data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                    #(self.#field_names.write_owned(gluon_data)?;)*
                     Ok(())
                 }
             }
@@ -450,14 +450,14 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             if field_names.is_empty() {
                 quote! {
                     #enum_name::#name => {
-                        data.write_u16(#i)?;
+                        gluon_data.write_u16(#i)?;
                     },
                 }
             } else {
                 quote! {
                     #enum_name::#name { #(#field_names),* } => {
-                        data.write_u16(#i)?;
-                        #(#field_names.write(data)?;)*
+                        gluon_data.write_u16(#i)?;
+                        #(#field_names.write(gluon_data)?;)*
                     },
                 }
             }
@@ -473,14 +473,14 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             if field_names.is_empty() {
                 quote! {
                     #enum_name::#name => {
-                        data.write_u16(#i)?;
+                        gluon_data.write_u16(#i)?;
                     },
                 }
             } else {
                 quote! {
                     #enum_name::#name { #(#field_names),* } => {
-                        data.write_u16(#i)?;
-                        #(#field_names.write_owned(data)?;)*
+                        gluon_data.write_u16(#i)?;
+                        #(#field_names.write_owned(gluon_data)?;)*
                     },
                 }
             }
@@ -502,7 +502,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             } else {
                 quote! {
                     #i => {
-                        #(let #field_names = gluon_wire::GluonConvertable::read(data)?;)*
+                        #(let #field_names = gluon_wire::GluonConvertable::read(gluon_data)?;)*
                         #enum_name::#name { #(#field_names,)* }
                     },
                 }
@@ -512,7 +512,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             impl gluon_wire::GluonConvertable for #enum_name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
-                    data: &mut gluon_wire::GluonDataBuilder<'a>,
+                    gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
                 ) -> Result<(), gluon_wire::GluonWriteError> {
                     match self {
                         #(#write_variants)*
@@ -520,14 +520,14 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
                     Ok(())
                 }
 
-                fn read(data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
-                    Ok(match data.read_u16()? {
+                fn read(gluon_data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                    Ok(match gluon_data.read_u16()? {
                         #(#read_variants)*
                         v => return Err(gluon_wire::GluonReadError::UnknownEnumVariant(v)),
                     })
                 }
 
-                fn write_owned(self, data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                fn write_owned(self, gluon_data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
                     match self {
                         #(#write_owned_variants)*
                     };

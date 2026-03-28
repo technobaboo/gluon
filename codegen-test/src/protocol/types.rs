@@ -19,28 +19,28 @@ pub struct Vec3 {
 impl gluon_wire::GluonConvertable for Vec3 {
     fn write<'a, 'b: 'a>(
         &'b self,
-        data: &mut gluon_wire::GluonDataBuilder<'a>,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
     ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.x.write(data)?;
-        self.y.write(data)?;
-        self.z.write(data)?;
+        self.x.write(gluon_data)?;
+        self.y.write(gluon_data)?;
+        self.z.write(gluon_data)?;
         Ok(())
     }
     fn read(
-        data: &mut gluon_wire::GluonDataReader,
+        gluon_data: &mut gluon_wire::GluonDataReader,
     ) -> Result<Self, gluon_wire::GluonReadError> {
-        let x = gluon_wire::GluonConvertable::read(data)?;
-        let y = gluon_wire::GluonConvertable::read(data)?;
-        let z = gluon_wire::GluonConvertable::read(data)?;
+        let x = gluon_wire::GluonConvertable::read(gluon_data)?;
+        let y = gluon_wire::GluonConvertable::read(gluon_data)?;
+        let z = gluon_wire::GluonConvertable::read(gluon_data)?;
         Ok(Vec3 { x, y, z })
     }
     fn write_owned(
         self,
-        data: &mut gluon_wire::GluonDataBuilder<'_>,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'_>,
     ) -> Result<(), gluon_wire::GluonWriteError> {
-        self.x.write_owned(data)?;
-        self.y.write_owned(data)?;
-        self.z.write_owned(data)?;
+        self.x.write_owned(gluon_data)?;
+        self.y.write_owned(gluon_data)?;
+        self.z.write_owned(gluon_data)?;
         Ok(())
     }
 }
