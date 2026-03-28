@@ -1,8 +1,89 @@
-use std::os::fd::{AsFd, OwnedFd};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+    os::fd::{AsFd, OwnedFd},
+};
 
 use binderbinder::binder_object::BinderObjectOrRef;
 
 use crate::{GluonConvertable, GluonReadError, GluonWriteError};
+
+impl<K: Hash + Eq + GluonConvertable, V: GluonConvertable> GluonConvertable for HashMap<K, V> {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut crate::GluonDataBuilder<'a>,
+    ) -> Result<(), GluonWriteError> {
+        data.write_u32(
+            self.len()
+                .try_into()
+                .map_err(|_| GluonWriteError::ListToLong)?,
+        )?;
+        for (k, v) in self.iter() {
+            k.write(data)?;
+            v.write(data)?;
+        }
+        Ok(())
+    }
+
+    fn write_owned(self, data: &mut crate::GluonDataBuilder<'_>) -> Result<(), GluonWriteError> {
+        data.write_u32(
+            self.len()
+                .try_into()
+                .map_err(|_| GluonWriteError::ListToLong)?,
+        )?;
+        for (k, v) in self.into_iter() {
+            k.write_owned(data)?;
+            v.write_owned(data)?;
+        }
+        Ok(())
+    }
+
+    fn read(data: &mut crate::GluonDataReader) -> Result<Self, GluonReadError> {
+        let len = data.read_u32()?;
+        let mut out = Self::with_capacity(len as usize);
+        for _ in 0..len {
+            out.insert(K::read(data)?, V::read(data)?);
+        }
+        Ok(out)
+    }
+}
+impl<T: Hash + Eq + GluonConvertable> GluonConvertable for HashSet<T> {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut crate::GluonDataBuilder<'a>,
+    ) -> Result<(), GluonWriteError> {
+        data.write_u32(
+            self.len()
+                .try_into()
+                .map_err(|_| GluonWriteError::ListToLong)?,
+        )?;
+        for v in self.iter() {
+            v.write(data)?;
+        }
+        Ok(())
+    }
+
+    fn write_owned(self, data: &mut crate::GluonDataBuilder<'_>) -> Result<(), GluonWriteError> {
+        data.write_u32(
+            self.len()
+                .try_into()
+                .map_err(|_| GluonWriteError::ListToLong)?,
+        )?;
+        for v in self.into_iter() {
+            v.write_owned(data)?;
+        }
+        Ok(())
+    }
+
+    fn read(data: &mut crate::GluonDataReader) -> Result<Self, GluonReadError> {
+        let len = data.read_u32()?;
+        let mut out = Self::with_capacity(len as usize);
+        for _ in 0..len {
+            out.insert(T::read(data)?);
+        }
+        Ok(out)
+    }
+}
 
 impl<T: GluonConvertable> GluonConvertable for Vec<T> {
     fn write<'a, 'b: 'a>(
