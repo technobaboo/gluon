@@ -362,6 +362,17 @@ pub fn gen_interface(
                     self.obj.to_binder_object_or_ref()
                 }
             }
+            impl std::hash::Hash for #name {
+                fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                    self.obj.hash(state);
+                }
+            }
+            impl PartialEq for #name {
+                fn eq(&self, other: &Self) -> bool {
+                    self.obj == other.obj
+                }
+            }
+            impl Eq for #name {}
         }
     };
     quote! {

@@ -155,8 +155,8 @@ impl gluon_wire::GluonConvertable for Test {
 }
 impl Test {
     pub fn quit(&self) -> Result<(), gluon_wire::GluonSendError> {
-        let mut builder = gluon_wire::GluonDataBuilder::new();
-        self.obj.device().transact_one_way(&self.obj, 8u32, builder.to_payload())?;
+        let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
+        self.obj.device().transact_one_way(&self.obj, 8u32, gluon_builder.to_payload())?;
         Ok(())
     }
     pub async fn ping(&self) -> Result<(), gluon_wire::GluonSendError> {
@@ -249,9 +249,9 @@ impl Test {
         let drop_notification = obj
             .device()
             .register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new());
-        let mut builder = gluon_wire::GluonDataBuilder::new();
-        builder.write_binder(&drop_notification);
-        _ = obj.device().transact_one_way(&obj, 4, builder.to_payload());
+        let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
+        gluon_builder.write_binder(&drop_notification);
+        _ = obj.device().transact_one_way(&obj, 4, gluon_builder.to_payload());
         Test { obj, drop_notification }
     }
     pub fn death_or_drop(&self) -> impl Future<Output = ()> + Send + Sync + 'static {
@@ -281,6 +281,17 @@ impl binderbinder::binder_object::ToBinderObjectOrRef for Test {
         self.obj.to_binder_object_or_ref()
     }
 }
+impl std::hash::Hash for Test {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.obj.hash(state);
+    }
+}
+impl PartialEq for Test {
+    fn eq(&self, other: &Self) -> bool {
+        self.obj == other.obj
+    }
+}
+impl Eq for Test {}
 pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 'static {
     fn quit(&self, _ctx: gluon_wire::GluonCtx);
     fn ping(&self, _ctx: gluon_wire::GluonCtx) -> impl Future<Output = ()> + Send + Sync;
