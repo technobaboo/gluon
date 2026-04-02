@@ -68,7 +68,7 @@ pub fn gen_module(
         .map(|(_name, def)| gen_enum(def, gen_ctx));
     let external_proto_const = gen_external_protocol_const(gen_ctx);
     quote! {
-        #![allow(unused, clippy::single_match, clippy::match_single_binding)]
+        #![allow(unused, clippy::single_match, clippy::match_single_binding, clippy::large_enum_variant)]
         use gluon_wire::GluonConvertable;
         #external_proto_const
         #(#structs)*
