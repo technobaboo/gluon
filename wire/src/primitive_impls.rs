@@ -8,6 +8,37 @@ use binderbinder::binder_object::BinderObjectOrRef;
 
 use crate::{GluonConvertable, GluonReadError, GluonWriteError};
 
+impl<T: GluonConvertable, E: GluonConvertable> GluonConvertable for Result<T, E> {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut crate::GluonDataBuilder<'a>,
+    ) -> Result<(), GluonWriteError> {
+        data.write_bool(self.is_ok())?;
+        match self {
+            Ok(v) => v.write(data)?,
+            Err(e) => e.write(data)?,
+        }
+        Ok(())
+    }
+
+    fn write_owned(self, data: &mut crate::GluonDataBuilder<'_>) -> Result<(), GluonWriteError> {
+        data.write_bool(self.is_ok())?;
+        match self {
+            Ok(v) => v.write_owned(data)?,
+            Err(e) => e.write_owned(data)?,
+        }
+        Ok(())
+    }
+
+    fn read(data: &mut crate::GluonDataReader) -> Result<Self, GluonReadError> {
+        let is_ok = data.read_bool()?;
+        let v = match is_ok {
+            true => Ok(T::read(data)?),
+            false => Err(E::read(data)?),
+        };
+        Ok(v)
+    }
+}
 impl<K: Hash + Eq + GluonConvertable, V: GluonConvertable> GluonConvertable for HashMap<K, V> {
     fn write<'a, 'b: 'a>(
         &'b self,
