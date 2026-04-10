@@ -3,6 +3,9 @@ name = "gluon-wire"
 version.workspace = true
 edition.workspace = true
 
+[features]
+tracing = []
+
 [dependencies]
 binderbinder.workspace = true
 bitflags = "2"

@@ -8,6 +8,7 @@ binderbinder.workspace = true
 gluon-parser.workspace = true
 gluon-wire.workspace = true
 tokio = "1.49.0"
+tracing = { version = "0.1.44", default-features = false }
 
 [build-dependencies]
 gluon-codegen-rust.workspace = true

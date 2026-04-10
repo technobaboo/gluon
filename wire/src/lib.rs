@@ -340,3 +340,114 @@ pub struct ExternalGluonType {
     pub name: &'static str,
     pub supported_derives: Derives,
 }
+
+#[cfg(feature = "tracing")]
+#[macro_export]
+macro_rules! impl_transaction_handler {
+    ($type:ty) => {
+        impl binderbinder::TransactionHandler for $type {
+            type ObjectResource = tokio::sync::RwLock<
+                std::collections::HashMap<u64, gluon_wire::drop_tracking::DropNotifier>,
+            >;
+            async fn handle(
+                &self,
+                transaction: binderbinder::device::Transaction,
+                obj_res: &Self::ObjectResource,
+            ) -> binderbinder::payload::PayloadBuilder<'_> {
+                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+                self.dispatch_two_way(
+                    transaction.code,
+                    &mut gluon_data,
+                    gluon_wire::GluonCtx {
+                        sender_pid: transaction.sender_pid,
+                        sender_euid: transaction.sender_euid,
+                    },
+                    obj_res,
+                )
+                .await
+                .inspect_err(|err| {
+                    tracing::error!(
+                        concat!("failed to dispatch two_way {} for ", stringify!($type)),
+                        err
+                    )
+                })
+                .unwrap_or_else(|_| gluon_wire::GluonDataBuilder::new())
+                .to_payload()
+            }
+
+            async fn handle_one_way(
+                &self,
+                transaction: binderbinder::device::Transaction,
+                obj_res: &Self::ObjectResource,
+            ) {
+                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+                _ = self
+                    .dispatch_one_way(
+                        transaction.code,
+                        &mut gluon_data,
+                        gluon_wire::GluonCtx {
+                            sender_pid: transaction.sender_pid,
+                            sender_euid: transaction.sender_euid,
+                        },
+                        obj_res,
+                    )
+                    .await
+                    .inspect_err(|err| {
+                        tracing::error!(
+                            concat!("failed to dispatch one_way {} for ", stringify!($type)),
+                            err
+                        )
+                    });
+            }
+        }
+    };
+}
+#[cfg(not(feature = "tracing"))]
+#[macro_export]
+macro_rules! impl_transaction_handler {
+    ($type:ty) => {
+        impl binderbinder::TransactionHandler for $type {
+            type ObjectResource = tokio::sync::RwLock<
+                std::collections::HashMap<u64, gluon_wire::drop_tracking::DropNotifier>,
+            >;
+            async fn handle(
+                &self,
+                transaction: binderbinder::device::Transaction,
+                obj_res: &Self::ObjectResource,
+            ) -> binderbinder::payload::PayloadBuilder<'_> {
+                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+                self.dispatch_two_way(
+                    transaction.code,
+                    &mut gluon_data,
+                    gluon_wire::GluonCtx {
+                        sender_pid: transaction.sender_pid,
+                        sender_euid: transaction.sender_euid,
+                    },
+                    obj_res,
+                )
+                .await
+                .unwrap_or_else(|_| gluon_wire::GluonDataBuilder::new())
+                .to_payload()
+            }
+
+            async fn handle_one_way(
+                &self,
+                transaction: binderbinder::device::Transaction,
+                obj_res: &Self::ObjectResource,
+            ) {
+                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+                _ = self
+                    .dispatch_one_way(
+                        transaction.code,
+                        &mut gluon_data,
+                        gluon_wire::GluonCtx {
+                            sender_pid: transaction.sender_pid,
+                            sender_euid: transaction.sender_euid,
+                        },
+                        obj_res,
+                    )
+                    .await;
+            }
+        }
+    };
+}

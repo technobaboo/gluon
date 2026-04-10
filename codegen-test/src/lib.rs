@@ -1,19 +1,15 @@
 use crate::protocol::test::TestHandler;
-use binderbinder::{TransactionHandler, device::Transaction, payload::PayloadBuilder};
-use gluon_wire::{GluonCtx, GluonDataReader, drop_tracking::DropNotifier};
+use gluon_wire::{GluonCtx, impl_transaction_handler};
 use std::{
     hash::{DefaultHasher, Hash},
     process,
 };
-use tokio::sync::RwLock;
 
 mod protocol;
 
 #[allow(unused)]
 #[derive(Debug)]
-struct TestHandlerImpl {
-    drop_notifications: RwLock<Vec<DropNotifier>>,
-}
+struct TestHandlerImpl {}
 
 impl TestHandler for TestHandlerImpl {
     fn quit(&self, _ctx: GluonCtx) {
@@ -46,38 +42,5 @@ impl TestHandler for TestHandlerImpl {
             z: 0.0,
         }
     }
-
-    async fn drop_notification_requested(&self, notifier: DropNotifier) {
-        self.drop_notifications.write().await.push(notifier);
-    }
 }
-impl TransactionHandler for TestHandlerImpl {
-    async fn handle(&self, transaction: Transaction) -> PayloadBuilder<'_> {
-        let mut reader = GluonDataReader::from_payload(transaction.payload);
-        self.dispatch_two_way(
-            transaction.code,
-            &mut reader,
-            GluonCtx {
-                sender_pid: transaction.sender_pid,
-                sender_euid: transaction.sender_euid,
-            },
-        )
-        .await
-        .unwrap()
-        .to_payload()
-    }
-
-    async fn handle_one_way(&self, transaction: Transaction) {
-        let mut reader = GluonDataReader::from_payload(transaction.payload);
-        self.dispatch_one_way(
-            transaction.code,
-            &mut reader,
-            GluonCtx {
-                sender_pid: transaction.sender_pid,
-                sender_euid: transaction.sender_euid,
-            },
-        )
-        .await
-        .unwrap()
-    }
-}
+impl_transaction_handler!(TestHandlerImpl);

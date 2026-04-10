@@ -199,26 +199,36 @@ pub fn gen_interface(
             }
         });
         quote! {
-            pub trait #handler_name: binderbinder::device::TransactionHandler + Send + Sync + 'static {
+            pub trait #handler_name: binderbinder::device::TransactionHandler<ObjectResource=tokio::sync::RwLock<std::collections::HashMap<u64, gluon_wire::drop_tracking::DropNotifier>>> + Send + Sync + 'static {
                 #(#methods)*
 
-                fn drop_notification_requested(&self, notifier: gluon_wire::drop_tracking::DropNotifier) -> impl Future<Output=()> + Send + Sync;
-                fn dispatch_two_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_two_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx, obj_res: &Self::ObjectResource) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         let mut out = gluon_wire::GluonDataBuilder::new();
                         match transaction_code {
+                            4 => {
+                                use std::hash::BuildHasher as _;
+                                let Ok(obj) = gluon_data.read_binder() else { return Ok(out); };
+                                let hash = std::hash::RandomState::new().hash_one(obj.clone());
+                                if out.write_u64(hash).is_err() {
+                                    return Ok(out);
+                                }
+                                obj_res.write().await.insert(hash, gluon_wire::drop_tracking::DropNotifier::new(&obj));
+                            }
                             #(#methods_dispatch)*
                             _ => {}
                         }
                         Ok(out)
                     }
                 }
-                fn dispatch_one_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_one_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx, obj_res: &Self::ObjectResource) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         match transaction_code {
                             4 => {
-                                let Ok(obj) = gluon_data.read_binder() else { return Ok(()); };
-                                self.drop_notification_requested(gluon_wire::drop_tracking::DropNotifier::new(&obj)).await;
+                                let Ok(id) = gluon_data.read_u64() else { return Ok(()); };
+                                if let Some(mut obj) = obj_res.write().await.remove(&id) {
+                                    obj.abort();
+                                }
                             }
                             #(#oneway_methods_dispatch)*
                             _ => {}
@@ -329,7 +339,7 @@ pub fn gen_interface(
                 }
                 #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
                 pub fn from_object_or_ref(obj: binderbinder::binder_object::BinderObjectOrRef) -> #name {
-                    let drop_notification = obj.device().register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new());
+                    let drop_notification = obj.device().register_object(gluon_wire::drop_tracking::DropNotifiedHandler::new(&obj));
                     let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
                     gluon_builder.write_binder(&drop_notification);
                     _ = obj.device().transact_one_way(&obj, 4, gluon_builder.to_payload());
