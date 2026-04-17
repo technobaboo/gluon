@@ -349,7 +349,6 @@ macro_rules! impl_transaction_handler {
             async fn handle(
                 self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
-                obj_res: &Self::ObjectResource,
             ) -> binderbinder::payload::PayloadBuilder<'_> {
                 let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                 self.dispatch_two_way(
@@ -359,7 +358,6 @@ macro_rules! impl_transaction_handler {
                         sender_pid: transaction.sender_pid,
                         sender_euid: transaction.sender_euid,
                     },
-                    obj_res,
                 )
                 .await
                 .inspect_err(|err| {
@@ -375,7 +373,6 @@ macro_rules! impl_transaction_handler {
             async fn handle_one_way(
                 self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
-                obj_res: &Self::ObjectResource,
             ) {
                 let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                 _ = self
@@ -386,7 +383,6 @@ macro_rules! impl_transaction_handler {
                             sender_pid: transaction.sender_pid,
                             sender_euid: transaction.sender_euid,
                         },
-                        obj_res,
                     )
                     .await
                     .inspect_err(|err| {
