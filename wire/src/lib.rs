@@ -346,11 +346,8 @@ pub struct ExternalGluonType {
 macro_rules! impl_transaction_handler {
     ($type:ty) => {
         impl binderbinder::TransactionHandler for $type {
-            type ObjectResource = tokio::sync::RwLock<
-                std::collections::HashMap<u64, gluon_wire::drop_tracking::DropNotifier>,
-            >;
             async fn handle(
-                &self,
+                self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
                 obj_res: &Self::ObjectResource,
             ) -> binderbinder::payload::PayloadBuilder<'_> {
@@ -376,7 +373,7 @@ macro_rules! impl_transaction_handler {
             }
 
             async fn handle_one_way(
-                &self,
+                self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
                 obj_res: &Self::ObjectResource,
             ) {
