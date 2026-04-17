@@ -55,9 +55,8 @@ dependencies = [
 [[package]]
 name = "binderbinder"
 version = "0.1.0"
-source = "git+https://github.com/technobaboo/binderbinder#3187cdd5c8ada89bf37bdb8f1f9c1b785e766f7a"
+source = "git+https://github.com/technobaboo/binderbinder#d1857b9aefd2c9cae4921914e1b469d854aa8351"
 dependencies = [
- "async-trait",
  "bitflags",
  "byteorder",
  "dashmap",
@@ -241,6 +240,7 @@ dependencies = [
 name = "gluon-wire"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "binderbinder",
  "bitflags",
  "rustix",

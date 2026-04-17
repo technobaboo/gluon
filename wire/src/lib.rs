@@ -407,14 +407,10 @@ macro_rules! impl_transaction_handler {
 macro_rules! impl_transaction_handler {
     ($type:ty) => {
         impl binderbinder::TransactionHandler for $type {
-            type ObjectResource = tokio::sync::RwLock<
-                std::collections::HashMap<u64, gluon_wire::drop_tracking::DropNotifier>,
-            >;
             async fn handle(
-                &self,
+                self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
-                obj_res: &Self::ObjectResource,
-            ) -> binderbinder::payload::PayloadBuilder<'_> {
+            ) -> binderbinder::payload::PayloadBuilder<'static> {
                 let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                 self.dispatch_two_way(
                     transaction.code,
@@ -423,7 +419,6 @@ macro_rules! impl_transaction_handler {
                         sender_pid: transaction.sender_pid,
                         sender_euid: transaction.sender_euid,
                     },
-                    obj_res,
                 )
                 .await
                 .unwrap_or_else(|_| gluon_wire::GluonDataBuilder::new())
@@ -431,9 +426,8 @@ macro_rules! impl_transaction_handler {
             }
 
             async fn handle_one_way(
-                &self,
+                self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
-                obj_res: &Self::ObjectResource,
             ) {
                 let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                 _ = self
@@ -444,7 +438,6 @@ macro_rules! impl_transaction_handler {
                             sender_pid: transaction.sender_pid,
                             sender_euid: transaction.sender_euid,
                         },
-                        obj_res,
                     )
                     .await;
             }

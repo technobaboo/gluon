@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use binderbinder::{
     TransactionHandler,
     binder_object::{BinderObjectOrRef, ToBinderObjectOrRef},
@@ -46,23 +48,22 @@ impl Drop for DropNotifiedHandler {
     }
 }
 impl DropNotifiedHandler {
-    pub fn new(target: &BinderObjectOrRef) -> Self {
-        Self {
+    pub fn new(target: BinderObjectOrRef) -> Arc<Self> {
+        Arc::new(Self {
             notify: Notify::new(),
-            target: target.clone(),
-        }
+            target,
+        })
     }
     pub async fn wait(&self) {
         self.notify.notified().await
     }
 }
 impl TransactionHandler for DropNotifiedHandler {
-    type ObjectResource = ();
-    async fn handle(&self, _transaction: Transaction, _res: &()) -> PayloadBuilder<'_> {
+    async fn handle(self: Arc<Self>, _transaction: Transaction) -> PayloadBuilder<'static> {
         PayloadBuilder::new()
     }
 
-    async fn handle_one_way(&self, transaction: Transaction, _res: &()) {
+    async fn handle_one_way(self: Arc<Self>, transaction: Transaction) {
         // should this also check for a magic number in the payload?
         if transaction.code == 4 {
             self.notify.notify_waiters();
