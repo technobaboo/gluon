@@ -349,7 +349,7 @@ macro_rules! impl_transaction_handler {
             async fn handle(
                 self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
-            ) -> binderbinder::payload::PayloadBuilder<'_> {
+            ) -> binderbinder::payload::PayloadBuilder<'static> {
                 let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                 self.dispatch_two_way(
                     transaction.code,
