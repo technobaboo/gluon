@@ -12,7 +12,7 @@ mod protocol;
 struct TestHandlerImpl {}
 
 impl TestHandler for TestHandlerImpl {
-    fn quit(&self, _ctx: GluonCtx) {
+    async fn quit(&self, _ctx: GluonCtx) {
         process::exit(0);
     }
 

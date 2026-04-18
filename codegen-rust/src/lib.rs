@@ -158,7 +158,7 @@ pub fn gen_interface(
                 let i = i as u32;
                 quote! {
                     #i => {
-                        self.#name(ctx, #(#params),*);
+                        self.#name(ctx, #(#params),*).await;
                     },
                 }
             });
@@ -180,7 +180,9 @@ pub fn gen_interface(
             });
             let fn_return = match return_types.as_deref() {
                 None => {
-                    quote! {}
+                    quote! {
+                        -> impl Future<Output=()> + Send + Sync
+                    }
                 }
                 Some(types) => {
                     let types = match types {

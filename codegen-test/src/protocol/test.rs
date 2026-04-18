@@ -266,7 +266,7 @@ impl PartialEq for Test {
 }
 impl Eq for Test {}
 pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 'static {
-    fn quit(&self, _ctx: gluon_wire::GluonCtx);
+    fn quit(&self, _ctx: gluon_wire::GluonCtx) -> impl Future<Output = ()> + Send + Sync;
     fn ping(&self, _ctx: gluon_wire::GluonCtx) -> impl Future<Output = ()> + Send + Sync;
     fn echo(
         &self,
@@ -329,7 +329,7 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
         async move {
             match transaction_code {
                 8u32 => {
-                    self.quit(ctx);
+                    self.quit(ctx).await;
                 }
                 _ => {}
             }
