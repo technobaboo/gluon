@@ -7,9 +7,7 @@ edition.workspace = true
 tracing = []
 
 [dependencies]
-async-trait = "0.1.89"
 binderbinder.workspace = true
 bitflags = "2"
 rustix = { version = "1.1.4", default-features = false }
 thiserror = "2.0.18"
-tokio = { version = "1.50.0", default-features = false }

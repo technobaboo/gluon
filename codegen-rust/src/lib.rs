@@ -294,16 +294,9 @@ pub fn gen_interface(
             }
         });
         quote! {
-            #[derive(Debug)]
+            #[derive(Debug, Clone)]
             pub struct #name {
                 obj: binderbinder::binder_object::BinderObjectOrRef,
-                drop_notification: binderbinder::binder_object::BinderObject<gluon_wire::drop_tracking::DropNotifiedHandler>,
-                drop_handler: std::sync::Arc<gluon_wire::drop_tracking::DropNotifiedHandler>,
-            }
-            impl Clone for #name {
-                fn clone(&self) -> Self {
-                    #name::from_object_or_ref(self.obj.clone())
-                }
             }
 
             impl gluon_wire::GluonConvertable for #name {
@@ -330,33 +323,8 @@ pub fn gen_interface(
                 }
                 #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
                 pub fn from_object_or_ref(obj: binderbinder::binder_object::BinderObjectOrRef) -> #name {
-                    let drop_handler = gluon_wire::drop_tracking::DropNotifiedHandler::new(obj.clone());
-                    let drop_notification = obj.device().register_object(drop_handler.clone());
-                    let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
-                    gluon_builder.write_binder(&drop_notification);
-                    _ = obj.device().transact_one_way(&obj, 4, gluon_builder.to_payload());
                     #name {
                         obj,
-                        drop_notification,
-                        drop_handler,
-                    }
-                }
-                pub fn death_or_drop(&self) -> impl Future<Output=()> + Send + Sync + 'static {
-                    let death_notification_future = match &self.obj {
-                        binderbinder::binder_object::BinderObjectOrRef::Ref(r) => Some(r.death_notification()),
-                        binderbinder::binder_object::BinderObjectOrRef::WeakRef(r) => Some(r.death_notification()),
-                        _ => None
-                    };
-                    let drop_handler = self.drop_handler.clone();
-                    async move {
-                        if let Some(death) = death_notification_future {
-                            tokio::select! {
-                                _ = death => {}
-                                _ = drop_handler.wait() => {}
-                            }
-                        } else {
-                            drop_handler.wait().await;
-                        }
                     }
                 }
             }
