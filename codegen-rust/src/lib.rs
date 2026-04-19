@@ -114,54 +114,40 @@ pub fn gen_interface(
     let name = format_ident!("{}", interface_name.to_case(Case::Pascal));
     let handler_name = format_ident!("{name}Handler");
     let handler = {
-        let methods_dispatch = def
-            .methods
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.returns.is_some())
-            .map(|(i, method)| {
-                let i = i + 8;
-                let params = method
-                    .params
-                    .iter()
-                    .map(|_| quote! {gluon_wire::GluonConvertable::read(gluon_data)?});
-                let name = format_ident!("{}", method.name.to_case(Case::Snake));
-                let return_names = method
-                    .returns
-                    .as_ref()
-                    .unwrap()
-                    .iter()
+        let methods_dispatch = def.methods.iter().enumerate().map(|(i, method)| {
+            let i = i + 8;
+            let params = method
+                .params
+                .iter()
+                .map(|_| quote! {gluon_wire::GluonConvertable::read(gluon_data)?});
+            let name = format_ident!("{}", method.name.to_case(Case::Snake));
+            let return_names = method.returns.as_ref().map(|v| {
+                v.iter()
                     .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
-                    .collect::<Vec<_>>();
-                let i = i as u32;
+                    .collect::<Vec<_>>()
+            });
+            let i = i as u32;
+            if let Some(return_names) = return_names {
                 quote! {
                     #i => {
+                        let return_callback = gluon_data.read_binder()?;
+                        let mut gluon_out = gluon_wire::GluonDataBuilder::new();
                         let (#(#return_names),*) = self.#name(ctx, #(#params),*).await;
                         #(
-                            #return_names.write_owned(&mut out)?;
+                            #return_names.write_owned(&mut gluon_out)?;
                         )*
+                        return_callback.device().transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
                     },
                 }
-            });
-        let oneway_methods_dispatch = def
-            .methods
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| m.returns.is_none())
-            .map(|(i, method)| {
-                let i = i + 8;
-                let params = method
-                    .params
-                    .iter()
-                    .map(|_| quote! {gluon_wire::GluonConvertable::read(gluon_data)?});
-                let name = format_ident!("{}", method.name.to_case(Case::Snake));
-                let i = i as u32;
+            } else {
                 quote! {
                     #i => {
                         self.#name(ctx, #(#params),*).await;
                     },
+
                 }
-            });
+            }
+        });
         let methods = def.methods.iter().map(|method| {
             let params = method.params.iter().map(|param| {
                 let type_def = gen_type(&param.ty, gen_ctx);
@@ -204,20 +190,10 @@ pub fn gen_interface(
             pub trait #handler_name: binderbinder::device::TransactionHandler + Send + Sync + 'static {
                 #(#methods)*
 
-                fn dispatch_two_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<gluon_wire::GluonDataBuilder<'static>, gluon_wire::GluonSendError>> + Send + Sync {
-                    async move {
-                        let mut out = gluon_wire::GluonDataBuilder::new();
-                        match transaction_code {
-                            #(#methods_dispatch)*
-                            _ => {}
-                        }
-                        Ok(out)
-                    }
-                }
                 fn dispatch_one_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         match transaction_code {
-                            #(#oneway_methods_dispatch)*
+                            #(#methods_dispatch)*
                             _ => {}
                         }
                         Ok(())
@@ -238,9 +214,6 @@ pub fn gen_interface(
             let params_write = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
                 quote! {#name.write(&mut gluon_builder)?;}
-            }).collect::<Vec<_>>();
-            let param_names = method.params.iter().map(|param| {
-                format_ident!("{}", param.name.to_case(Case::Snake))
             }).collect::<Vec<_>>();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
@@ -266,20 +239,19 @@ pub fn gen_interface(
                             quote! {(#(#types),*)}
                         }
                     };
-                    let blocking_name = format_ident!("{name}_blocking");
                     quote! {
                         #doc_comment
                         pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
-                            let this = self.clone();
-                            tokio::task::spawn_blocking(move ||
-                                this.#blocking_name(#(#param_names),*)
-                            ).await.unwrap()
-                        }
-                        pub fn #blocking_name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
                             let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
+                            let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
+                            let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
+                            gluon_builder.write_binder(&gluon_ret)?;
                             #(#params_write)*
-                            let reader = self.obj.device().transact_blocking(&self.obj, #i, gluon_builder.to_payload())?.1;
-                            let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
+                            self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
+                            // this is safe since we're also holding the
+                            // channel sender
+                            let transaction = gluon_recv.recv().await.unwrap();
+                            let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                             Ok(#return_tuple)
                         }
                     }

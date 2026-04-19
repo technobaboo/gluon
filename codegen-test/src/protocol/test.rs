@@ -160,77 +160,59 @@ impl Test {
         Ok(())
     }
     pub async fn ping(&self) -> Result<(), gluon_wire::GluonSendError> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.ping_blocking()).await.unwrap()
-    }
-    pub fn ping_blocking(&self) -> Result<(), gluon_wire::GluonSendError> {
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
-        let reader = self
-            .obj
-            .device()
-            .transact_blocking(&self.obj, 9u32, gluon_builder.to_payload())?
-            .1;
-        let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
+        let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
+        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
+        gluon_builder.write_binder(&gluon_ret)?;
+        self.obj.device().transact_one_way(&self.obj, 9u32, gluon_builder.to_payload())?;
+        let transaction = gluon_recv.recv().await.unwrap();
+        let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
         Ok(())
     }
     pub async fn echo(
         &self,
         input: TestEnum,
     ) -> Result<TestEnum, gluon_wire::GluonSendError> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.echo_blocking(input)).await.unwrap()
-    }
-    pub fn echo_blocking(
-        &self,
-        input: TestEnum,
-    ) -> Result<TestEnum, gluon_wire::GluonSendError> {
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
+        let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
+        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
+        gluon_builder.write_binder(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
-        let reader = self
-            .obj
+        self.obj
             .device()
-            .transact_blocking(&self.obj, 10u32, gluon_builder.to_payload())?
-            .1;
-        let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
+            .transact_one_way(&self.obj, 10u32, gluon_builder.to_payload())?;
+        let transaction = gluon_recv.recv().await.unwrap();
+        let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
         Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
     }
     pub async fn echo_ref(
         &self,
         input: Test,
     ) -> Result<Test, gluon_wire::GluonSendError> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.echo_ref_blocking(input)).await.unwrap()
-    }
-    pub fn echo_ref_blocking(
-        &self,
-        input: Test,
-    ) -> Result<Test, gluon_wire::GluonSendError> {
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
+        let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
+        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
+        gluon_builder.write_binder(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
-        let reader = self
-            .obj
+        self.obj
             .device()
-            .transact_blocking(&self.obj, 11u32, gluon_builder.to_payload())?
-            .1;
-        let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
+            .transact_one_way(&self.obj, 11u32, gluon_builder.to_payload())?;
+        let transaction = gluon_recv.recv().await.unwrap();
+        let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
         Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
     }
     pub async fn get_position(
         &self,
     ) -> Result<super::types::Vec3, gluon_wire::GluonSendError> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.get_position_blocking()).await.unwrap()
-    }
-    pub fn get_position_blocking(
-        &self,
-    ) -> Result<super::types::Vec3, gluon_wire::GluonSendError> {
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
-        let reader = self
-            .obj
+        let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
+        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
+        gluon_builder.write_binder(&gluon_ret)?;
+        self.obj
             .device()
-            .transact_blocking(&self.obj, 12u32, gluon_builder.to_payload())?
-            .1;
-        let mut reader = gluon_wire::GluonDataReader::from_payload(reader);
+            .transact_one_way(&self.obj, 12u32, gluon_builder.to_payload())?;
+        let transaction = gluon_recv.recv().await.unwrap();
+        let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
         Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
     }
     pub fn from_handler<H: TestHandler>(
@@ -282,44 +264,6 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
         &self,
         _ctx: gluon_wire::GluonCtx,
     ) -> impl Future<Output = super::types::Vec3> + Send + Sync;
-    fn dispatch_two_way(
-        &self,
-        transaction_code: u32,
-        gluon_data: &mut gluon_wire::GluonDataReader,
-        ctx: gluon_wire::GluonCtx,
-    ) -> impl Future<
-        Output = Result<
-            gluon_wire::GluonDataBuilder<'static>,
-            gluon_wire::GluonSendError,
-        >,
-    > + Send + Sync {
-        async move {
-            let mut out = gluon_wire::GluonDataBuilder::new();
-            match transaction_code {
-                9u32 => {
-                    let () = self.ping(ctx).await;
-                }
-                10u32 => {
-                    let (output) = self
-                        .echo(ctx, gluon_wire::GluonConvertable::read(gluon_data)?)
-                        .await;
-                    output.write_owned(&mut out)?;
-                }
-                11u32 => {
-                    let (output) = self
-                        .echo_ref(ctx, gluon_wire::GluonConvertable::read(gluon_data)?)
-                        .await;
-                    output.write_owned(&mut out)?;
-                }
-                12u32 => {
-                    let (position) = self.get_position(ctx).await;
-                    position.write_owned(&mut out)?;
-                }
-                _ => {}
-            }
-            Ok(out)
-        }
-    }
     fn dispatch_one_way(
         &self,
         transaction_code: u32,
@@ -330,6 +274,45 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
             match transaction_code {
                 8u32 => {
                     self.quit(ctx).await;
+                }
+                9u32 => {
+                    let return_callback = gluon_data.read_binder()?;
+                    let mut gluon_out = gluon_wire::GluonDataBuilder::new();
+                    let () = self.ping(ctx).await;
+                    return_callback
+                        .device()
+                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                }
+                10u32 => {
+                    let return_callback = gluon_data.read_binder()?;
+                    let mut gluon_out = gluon_wire::GluonDataBuilder::new();
+                    let (output) = self
+                        .echo(ctx, gluon_wire::GluonConvertable::read(gluon_data)?)
+                        .await;
+                    output.write_owned(&mut gluon_out)?;
+                    return_callback
+                        .device()
+                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                }
+                11u32 => {
+                    let return_callback = gluon_data.read_binder()?;
+                    let mut gluon_out = gluon_wire::GluonDataBuilder::new();
+                    let (output) = self
+                        .echo_ref(ctx, gluon_wire::GluonConvertable::read(gluon_data)?)
+                        .await;
+                    output.write_owned(&mut gluon_out)?;
+                    return_callback
+                        .device()
+                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                }
+                12u32 => {
+                    let return_callback = gluon_data.read_binder()?;
+                    let mut gluon_out = gluon_wire::GluonDataBuilder::new();
+                    let (position) = self.get_position(ctx).await;
+                    position.write_owned(&mut gluon_out)?;
+                    return_callback
+                        .device()
+                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
                 }
                 _ => {}
             }

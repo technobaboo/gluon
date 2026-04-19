@@ -3,14 +3,18 @@ pub mod primitive_impls;
 use std::{
     os::fd::{BorrowedFd, OwnedFd},
     string::FromUtf8Error,
+    sync::Arc,
 };
 
 use binderbinder::{
+    TransactionHandler,
     binder_object::{BinderObjectOrRef, ToBinderObjectOrRef},
+    device::Transaction,
     payload::{PayloadBinderRefReadError, PayloadBuilder, PayloadObjectReadError, PayloadReader},
 };
 use rustix::process::{RawPid, RawUid};
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 pub struct GluonDataBuilder<'a> {
     payload: PayloadBuilder<'a>,
@@ -304,6 +308,28 @@ pub struct GluonCtx {
     pub sender_pid: RawPid,
     pub sender_euid: RawUid,
 }
+pub struct ReturnHandler(mpsc::Sender<Transaction>);
+
+impl std::fmt::Debug for ReturnHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReturnHandler").finish()
+    }
+}
+impl TransactionHandler for ReturnHandler {
+    async fn handle(self: Arc<Self>, _transaction: Transaction) -> PayloadBuilder<'static> {
+        PayloadBuilder::new()
+    }
+
+    async fn handle_one_way(self: Arc<Self>, transaction: Transaction) {
+        _ = self.0.send(transaction).await;
+    }
+}
+impl ReturnHandler {
+    pub fn new() -> (Self, mpsc::Receiver<Transaction>) {
+        let (tx, rx) = mpsc::channel(1);
+        (Self(tx), rx)
+    }
+}
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -349,24 +375,11 @@ macro_rules! impl_transaction_handler {
                 self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
             ) -> binderbinder::payload::PayloadBuilder<'static> {
-                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
-                self.dispatch_two_way(
-                    transaction.code,
-                    &mut gluon_data,
-                    gluon_wire::GluonCtx {
-                        sender_pid: transaction.sender_pid,
-                        sender_euid: transaction.sender_euid,
-                    },
-                )
-                .await
-                .inspect_err(|err| {
-                    tracing::error!(
-                        concat!("failed to dispatch two_way {} for ", stringify!($type)),
-                        err
-                    )
-                })
-                .unwrap_or_else(|_| gluon_wire::GluonDataBuilder::new())
-                .to_payload()
+                tracing::warn!(concat!(
+                    "Received two way transaction for ",
+                    stringify!($type)
+                ));
+                binderbinder::payload::PayloadBuilder::new()
             }
 
             async fn handle_one_way(
@@ -403,18 +416,7 @@ macro_rules! impl_transaction_handler {
                 self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
             ) -> binderbinder::payload::PayloadBuilder<'static> {
-                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
-                self.dispatch_two_way(
-                    transaction.code,
-                    &mut gluon_data,
-                    gluon_wire::GluonCtx {
-                        sender_pid: transaction.sender_pid,
-                        sender_euid: transaction.sender_euid,
-                    },
-                )
-                .await
-                .unwrap_or_else(|_| gluon_wire::GluonDataBuilder::new())
-                .to_payload()
+                binderbinder::payload::PayloadBuilder::new()
             }
 
             async fn handle_one_way(
