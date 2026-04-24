@@ -216,11 +216,11 @@ impl Test {
         Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
     }
     pub fn from_handler<H: TestHandler>(
-        obj: &binderbinder::binder_object::BinderObject<H>,
+        obj: impl AsRef<binderbinder::binder_object::BinderObjectRef<H>>,
     ) -> Test {
         Test::from_object_or_ref(
             binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-                obj,
+                obj.as_ref(),
             ),
         )
     }
