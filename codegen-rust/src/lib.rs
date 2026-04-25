@@ -292,7 +292,7 @@ pub fn gen_interface(
             }
             impl #name {
                 #(#methods)*
-                pub fn from_handler<H: #handler_name>(obj: &binderbinder::binder_object::BinderObjectRef<H>) -> #name {
+                pub fn from_handler<H: #handler_name>(obj: &impl binderbinder::binder_object::OwnedBinderObjectRefTrait<H>) -> #name {
                     #name::from_object_or_ref(binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(obj))
                 }
                 #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
