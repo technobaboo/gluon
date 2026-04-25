@@ -1,8 +1,10 @@
-use crate::protocol::test::TestHandler;
+use crate::protocol::test::{Test, TestHandler};
+use binderbinder::BinderDevice;
 use gluon_wire::{GluonCtx, impl_transaction_handler};
 use std::{
     hash::{DefaultHasher, Hash},
     process,
+    sync::Arc,
 };
 
 mod protocol;
@@ -10,6 +12,12 @@ mod protocol;
 #[allow(unused)]
 #[derive(Debug)]
 struct TestHandlerImpl {}
+
+#[expect(unused)]
+fn a(dev: Arc<BinderDevice>) {
+    let v = dev.register_object(TestHandlerImpl {});
+    let handler = Test::from_handler(&v);
+}
 
 impl TestHandler for TestHandlerImpl {
     async fn quit(&self, _ctx: GluonCtx) {
