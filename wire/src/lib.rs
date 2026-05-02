@@ -386,11 +386,11 @@ macro_rules! impl_transaction_handler {
                 self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
             ) {
-                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+                let gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                 _ = self
                     .dispatch_one_way(
                         transaction.code,
-                        &mut gluon_data,
+                        gluon_data,
                         gluon_wire::GluonCtx {
                             sender_pid: transaction.sender_pid,
                             sender_euid: transaction.sender_euid,
@@ -423,11 +423,11 @@ macro_rules! impl_transaction_handler {
                 self: std::sync::Arc<Self>,
                 transaction: binderbinder::device::Transaction,
             ) {
-                let mut gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+                let gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                 _ = self
                     .dispatch_one_way(
                         transaction.code,
-                        &mut gluon_data,
+                        gluon_data,
                         gluon_wire::GluonCtx {
                             sender_pid: transaction.sender_pid,
                             sender_euid: transaction.sender_euid,

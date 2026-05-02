@@ -116,10 +116,10 @@ pub fn gen_interface(
     let handler = {
         let methods_dispatch = def.methods.iter().enumerate().map(|(i, method)| {
             let i = i + 8;
-            let params = method
-                .params
+            let names = method.params.iter().map(|v|{ format_ident!("param_{}", v.name) }).collect::<Vec<_>>();
+            let params = names
                 .iter()
-                .map(|_| quote! {gluon_wire::GluonConvertable::read(gluon_data)?});
+                .map(|v| quote! {let #v = gluon_wire::GluonConvertable::read(&mut gluon_data)?;});
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let return_names = method.returns.as_ref().map(|v| {
                 v.iter()
@@ -132,7 +132,9 @@ pub fn gen_interface(
                     #i => {
                         let return_callback = gluon_data.read_binder()?;
                         let mut gluon_out = gluon_wire::GluonDataBuilder::new();
-                        let (#(#return_names),*) = self.#name(ctx, #(#params),*).await;
+                        #(#params)*
+                        let (#(#return_names),*) = self.#name(ctx, #(#names),*).await;
+                        drop(gluon_data);
                         #(
                             #return_names.write_owned(&mut gluon_out)?;
                         )*
@@ -142,7 +144,9 @@ pub fn gen_interface(
             } else {
                 quote! {
                     #i => {
-                        self.#name(ctx, #(#params),*).await;
+                        #(#params)*
+                        drop(gluon_data);
+                        self.#name(ctx, #(#names),*).await;
                     },
 
                 }
@@ -190,7 +194,7 @@ pub fn gen_interface(
             pub trait #handler_name: binderbinder::device::TransactionHandler + Send + Sync + 'static {
                 #(#methods)*
 
-                fn dispatch_one_way(&self, transaction_code: u32, gluon_data: &mut gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_one_way(&self, transaction_code: u32, mut gluon_data: gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
                     async move {
                         match transaction_code {
                             #(#methods_dispatch)*

@@ -267,18 +267,20 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
     fn dispatch_one_way(
         &self,
         transaction_code: u32,
-        gluon_data: &mut gluon_wire::GluonDataReader,
+        mut gluon_data: gluon_wire::GluonDataReader,
         ctx: gluon_wire::GluonCtx,
     ) -> impl Future<Output = Result<(), gluon_wire::GluonSendError>> + Send + Sync {
         async move {
             match transaction_code {
                 8u32 => {
+                    drop(gluon_data);
                     self.quit(ctx).await;
                 }
                 9u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon_wire::GluonDataBuilder::new();
                     let () = self.ping(ctx).await;
+                    drop(gluon_data);
                     return_callback
                         .device()
                         .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
@@ -286,9 +288,11 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
                 10u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon_wire::GluonDataBuilder::new();
-                    let (output) = self
-                        .echo(ctx, gluon_wire::GluonConvertable::read(gluon_data)?)
-                        .await;
+                    let param_input = gluon_wire::GluonConvertable::read(
+                        &mut gluon_data,
+                    )?;
+                    let (output) = self.echo(ctx, param_input).await;
+                    drop(gluon_data);
                     output.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
@@ -297,9 +301,11 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
                 11u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon_wire::GluonDataBuilder::new();
-                    let (output) = self
-                        .echo_ref(ctx, gluon_wire::GluonConvertable::read(gluon_data)?)
-                        .await;
+                    let param_input = gluon_wire::GluonConvertable::read(
+                        &mut gluon_data,
+                    )?;
+                    let (output) = self.echo_ref(ctx, param_input).await;
+                    drop(gluon_data);
                     output.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
@@ -309,6 +315,7 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon_wire::GluonDataBuilder::new();
                     let (position) = self.get_position(ctx).await;
+                    drop(gluon_data);
                     position.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
