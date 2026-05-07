@@ -231,9 +231,19 @@ version = "0.1.0"
 dependencies = [
  "binderbinder",
  "bitflags",
+ "gluon-wire-derive",
  "rustix",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "gluon-wire-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

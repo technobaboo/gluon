@@ -1,6 +1,6 @@
 use crate::protocol::test::{Test, TestHandler};
 use binderbinder::BinderDevice;
-use gluon_wire::{GluonCtx, impl_transaction_handler};
+use gluon_wire::GluonCtx;
 use std::{
     hash::{DefaultHasher, Hash},
     process,
@@ -10,7 +10,7 @@ use std::{
 mod protocol;
 
 #[allow(unused)]
-#[derive(Debug)]
+#[derive(Debug, gluon_wire::Handler)]
 struct TestHandlerImpl {}
 
 #[expect(unused)]
@@ -51,4 +51,3 @@ impl TestHandler for TestHandlerImpl {
         }
     }
 }
-impl_transaction_handler!(TestHandlerImpl);

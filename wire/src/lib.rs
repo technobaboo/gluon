@@ -1,5 +1,7 @@
 pub mod primitive_impls;
 
+pub use gluon_wire_derive::Handler;
+
 use std::{
     os::fd::{BorrowedFd, OwnedFd},
     string::FromUtf8Error,
@@ -364,77 +366,4 @@ pub struct ExternalGluonProtocol {
 pub struct ExternalGluonType {
     pub name: &'static str,
     pub supported_derives: Derives,
-}
-
-#[cfg(feature = "tracing")]
-#[macro_export]
-macro_rules! impl_transaction_handler {
-    ($type:ty) => {
-        impl binderbinder::TransactionHandler for $type {
-            async fn handle(
-                self: std::sync::Arc<Self>,
-                transaction: binderbinder::device::Transaction,
-            ) -> binderbinder::payload::PayloadBuilder<'static> {
-                tracing::warn!(concat!(
-                    "Received two way transaction for ",
-                    stringify!($type)
-                ));
-                binderbinder::payload::PayloadBuilder::new()
-            }
-
-            async fn handle_one_way(
-                self: std::sync::Arc<Self>,
-                transaction: binderbinder::device::Transaction,
-            ) {
-                let gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
-                _ = self
-                    .dispatch_one_way(
-                        transaction.code,
-                        gluon_data,
-                        gluon_wire::GluonCtx {
-                            sender_pid: transaction.sender_pid,
-                            sender_euid: transaction.sender_euid,
-                        },
-                    )
-                    .await
-                    .inspect_err(|err| {
-                        tracing::error!(
-                            concat!("failed to dispatch one_way {} for ", stringify!($type)),
-                            err
-                        )
-                    });
-            }
-        }
-    };
-}
-#[cfg(not(feature = "tracing"))]
-#[macro_export]
-macro_rules! impl_transaction_handler {
-    ($type:ty) => {
-        impl binderbinder::TransactionHandler for $type {
-            async fn handle(
-                self: std::sync::Arc<Self>,
-                transaction: binderbinder::device::Transaction,
-            ) -> binderbinder::payload::PayloadBuilder<'static> {
-                binderbinder::payload::PayloadBuilder::new()
-            }
-
-            async fn handle_one_way(
-                self: std::sync::Arc<Self>,
-                transaction: binderbinder::device::Transaction,
-            ) {
-                let gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
-                _ = self
-                    .dispatch_one_way(
-                        transaction.code,
-                        gluon_data,
-                        gluon_wire::GluonCtx {
-                            sender_pid: transaction.sender_pid,
-                            sender_euid: transaction.sender_euid,
-                        },
-                    )
-                    .await;
-            }
-        }
-    };
 }

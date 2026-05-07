@@ -4,10 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-tracing = []
+tracing = ["gluon-wire-derive/tracing"]
 
 [dependencies]
 binderbinder.workspace = true
+gluon-wire-derive.workspace = true
 bitflags = "2"
 rustix = { version = "1.1.4", default-features = false }
 thiserror = "2.0.18"
