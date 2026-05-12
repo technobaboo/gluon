@@ -8,6 +8,23 @@ use binderbinder::binder_object::BinderObjectOrRef;
 
 use crate::{GluonConvertable, GluonReadError, GluonWriteError};
 
+impl<T: GluonConvertable> GluonConvertable for Box<T> {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        data: &mut crate::GluonDataBuilder<'a>,
+    ) -> Result<(), GluonWriteError> {
+        (**self).write(data)
+    }
+
+    fn write_owned(self, data: &mut crate::GluonDataBuilder<'_>) -> Result<(), GluonWriteError> {
+        (*self).write_owned(data)
+    }
+
+    fn read(data: &mut crate::GluonDataReader) -> Result<Self, GluonReadError> {
+        T::read(data).map(Box::new)
+    }
+}
+
 impl<T: GluonConvertable, E: GluonConvertable> GluonConvertable for Result<T, E> {
     fn write<'a, 'b: 'a>(
         &'b self,

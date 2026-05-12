@@ -2,6 +2,7 @@ use convert_case::{Case, Casing};
 use gluon_parser::{CustomType, EnumDef, Field, Interface, Protocol, StructDef, Type};
 use gluon_wire::ExternalGluonProtocol;
 use quote::{format_ident, quote};
+use std::collections::HashSet;
 use std::ops::Deref;
 
 pub use gluon_wire::Derives;
@@ -330,8 +331,87 @@ pub fn gen_interface(
     }
 }
 
+/// Returns true if `ty` transitively contains `target` as an inline (non-heap-allocated) type.
+/// Vec/Set/Map/Ref are heap-allocated and break the cycle; Option/Result/Array are inline.
+fn type_is_recursive(ty: &Type, target: &str, gen_ctx: &GenCtx) -> bool {
+    let mut visiting = HashSet::new();
+    type_contains_inline(ty, target, gen_ctx, &mut visiting)
+}
+
+fn type_contains_inline(
+    ty: &Type,
+    target: &str,
+    gen_ctx: &GenCtx,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    match ty {
+        Type::Bool
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::F32
+        | Type::F64
+        | Type::String
+        | Type::Fd => false,
+        // heap-allocated or pointer — break any recursion cycle
+        Type::Vec(_) | Type::Set(_) | Type::Map(_, _) | Type::Ref(_) => false,
+        // inline wrappers — propagate
+        Type::Option(inner) | Type::Array(inner, _) => {
+            type_contains_inline(inner, target, gen_ctx, visiting)
+        }
+        Type::Result(ok, err) => {
+            type_contains_inline(ok, target, gen_ctx, visiting)
+                || type_contains_inline(err, target, gen_ctx, visiting)
+        }
+        Type::Custom(CustomType::Qualified(_, _)) => false, // external type, safe
+        Type::Custom(CustomType::Named(name)) => {
+            if name == target {
+                return true;
+            }
+            if visiting.contains(name) {
+                return false;
+            }
+            visiting.insert(name.clone());
+            let result = named_type_contains_inline(name, target, gen_ctx, visiting);
+            visiting.remove(name);
+            result
+        }
+    }
+}
+
+fn named_type_contains_inline(
+    name: &str,
+    target: &str,
+    gen_ctx: &GenCtx,
+    visiting: &mut HashSet<String>,
+) -> bool {
+    let proto = &gen_ctx.curr_protocol.protocol;
+    if let Some((_, s)) = proto.structs.iter().find(|(n, _)| n == name) {
+        return s
+            .fields
+            .iter()
+            .any(|f| type_contains_inline(&f.ty, target, gen_ctx, visiting));
+    }
+    if let Some((_, e)) = proto.enums.iter().find(|(n, _)| n == name) {
+        return e
+            .variants
+            .iter()
+            .flat_map(|v| v.fields.iter())
+            .any(|f| type_contains_inline(&f.ty, target, gen_ctx, visiting));
+    }
+    false
+}
+
 pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
-    let fields = def.fields.iter().map(|f| gen_field_struct(f, gen_ctx));
+    let fields = def
+        .fields
+        .iter()
+        .map(|f| gen_field_struct(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx)));
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(struct_supported_derives(def, gen_ctx));
     let name = format_ident!("{}", name);
@@ -377,7 +457,9 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
 
 pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     let variants = def.variants.iter().map(|variant| {
-        let fields = variant.fields.iter().map(|f| gen_field_enum(f, gen_ctx));
+        let fields = variant.fields.iter().map(|f| {
+            gen_field_enum(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx))
+        });
         let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
         let doc_comment = variant.doc.as_ref().map(|str| quote! {#[doc = #str]});
         if !variant.fields.is_empty() {
@@ -507,8 +589,13 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     }
 }
 
-pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2::TokenStream {
     let type_def = gen_type(&def.ty, gen_ctx);
+    let type_def = if boxed {
+        quote! { Box<#type_def> }
+    } else {
+        type_def
+    };
     let name = format_ident!("{}", def.name.to_case(Case::Snake));
     let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
     quote! {
@@ -516,8 +603,13 @@ pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         #name: #type_def,
     }
 }
-pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2::TokenStream {
     let type_def = gen_type(&def.ty, gen_ctx);
+    let type_def = if boxed {
+        quote! { Box<#type_def> }
+    } else {
+        type_def
+    };
     let name = format_ident!("{}", def.name.to_case(Case::Snake));
     let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
     quote! {
@@ -610,22 +702,32 @@ pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
 }
 
 fn struct_supported_derives(def: &StructDef, gen_ctx: &GenCtx) -> Derives {
+    let mut visiting = HashSet::new();
     def.fields
         .iter()
-        .map(|f| supported_derives(&f.ty, gen_ctx))
+        .map(|f| supported_derives_inner(&f.ty, gen_ctx, &mut visiting))
         .fold(gen_ctx.requested_derives, |acc, d| acc & d)
 }
 
 fn enum_supported_derives(def: &EnumDef, gen_ctx: &GenCtx) -> Derives {
+    let mut visiting = HashSet::new();
     def.variants
         .iter()
         .flat_map(|v| v.fields.iter())
-        .map(|f| supported_derives(&f.ty, gen_ctx))
+        .map(|f| supported_derives_inner(&f.ty, gen_ctx, &mut visiting))
         .fold(gen_ctx.requested_derives, |acc, d| acc & d)
 }
 
 /// Returns which of the requested derives this type can support.
 pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Derives {
+    supported_derives_inner(def, gen_ctx, &mut HashSet::new())
+}
+
+fn supported_derives_inner(
+    def: &Type,
+    gen_ctx: &GenCtx,
+    visiting: &mut HashSet<String>,
+) -> Derives {
     let requested = gen_ctx.requested_derives;
     match def {
         Type::Bool
@@ -651,11 +753,11 @@ pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Derives {
         // OwnedFd doesn't implement any derivable traits (other than Debug)
         Type::Fd => Derives::empty(),
         Type::Ref(_) => requested & Derives::CLONE,
-        Type::Custom(custom) => custom_type_derives(custom, gen_ctx),
-        Type::Array(v, _) => supported_derives(v, gen_ctx),
-        Type::Vec(v) => supported_derives(v, gen_ctx) - Derives::COPY,
-        Type::Set(v) => supported_derives(v, gen_ctx),
-        Type::Option(v) => supported_derives(v, gen_ctx),
+        Type::Custom(custom) => custom_type_derives_inner(custom, gen_ctx, visiting),
+        Type::Array(v, _) => supported_derives_inner(v, gen_ctx, visiting),
+        Type::Vec(v) => supported_derives_inner(v, gen_ctx, visiting) - Derives::COPY,
+        Type::Set(v) => supported_derives_inner(v, gen_ctx, visiting),
+        Type::Option(v) => supported_derives_inner(v, gen_ctx, visiting),
         // TODO: figure out correct semantics
         Type::Result(_, _) => Derives::empty(),
         // TODO: figure out correct semantics
@@ -663,9 +765,13 @@ pub fn supported_derives(def: &Type, gen_ctx: &GenCtx) -> Derives {
     }
 }
 
-fn custom_type_derives(custom: &CustomType, gen_ctx: &GenCtx) -> Derives {
+fn custom_type_derives_inner(
+    custom: &CustomType,
+    gen_ctx: &GenCtx,
+    visiting: &mut HashSet<String>,
+) -> Derives {
     match custom {
-        CustomType::Named(name) => derives_from_protocol(name, gen_ctx),
+        CustomType::Named(name) => derives_from_protocol_inner(name, gen_ctx, visiting),
         CustomType::Qualified(namespace, type_name) => {
             let import = gen_ctx
                 .curr_protocol
@@ -678,12 +784,13 @@ fn custom_type_derives(custom: &CustomType, gen_ctx: &GenCtx) -> Derives {
                 .iter()
                 .find(|v| v.name == import.name)
             {
-                return derives_from_protocol(
+                return derives_from_protocol_inner(
                     type_name,
                     &GenCtx {
                         curr_protocol: v,
                         ..*gen_ctx
                     },
+                    visiting,
                 );
             }
 
@@ -702,8 +809,17 @@ fn custom_type_derives(custom: &CustomType, gen_ctx: &GenCtx) -> Derives {
     }
 }
 
-fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
-    gen_ctx
+fn derives_from_protocol_inner(
+    type_name: &str,
+    gen_ctx: &GenCtx,
+    visiting: &mut HashSet<String>,
+) -> Derives {
+    // Cycle guard: if already computing this type's derives, assume all requested
+    // derives are supported so other fields in the cycle can restrict further.
+    if !visiting.insert(type_name.to_string()) {
+        return gen_ctx.requested_derives;
+    }
+    let result = gen_ctx
         .curr_protocol
         .enums
         .iter()
@@ -712,7 +828,7 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
             v.variants
                 .iter()
                 .flat_map(|v| v.fields.iter())
-                .map(|v| supported_derives(&v.ty, gen_ctx))
+                .map(|v| supported_derives_inner(&v.ty, gen_ctx, visiting))
                 .reduce(|a, b| a & b)
                 .unwrap_or(gen_ctx.requested_derives)
         })
@@ -725,7 +841,7 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
                 .map(|(_, v)| {
                     v.fields
                         .iter()
-                        .map(|v| supported_derives(&v.ty, gen_ctx))
+                        .map(|v| supported_derives_inner(&v.ty, gen_ctx, visiting))
                         .reduce(|a, b| a & b)
                         .unwrap_or(gen_ctx.requested_derives)
                 })
@@ -739,7 +855,9 @@ fn derives_from_protocol(type_name: &str, gen_ctx: &GenCtx) -> Derives {
                 .map(|_| gen_ctx.requested_derives & Derives::CLONE)
         })
         // for types with no fields, they support all requested derives
-        .unwrap_or_else(|| panic!("unknown type: {type_name}"))
+        .unwrap_or_else(|| panic!("unknown type: {type_name}"));
+    visiting.remove(type_name);
+    result
 }
 
 fn derives_to_tokens(derives: Derives) -> Vec<proc_macro2::Ident> {
@@ -769,4 +887,185 @@ fn derives_to_tokens(derives: Derives) -> Vec<proc_macro2::Ident> {
         out.push(format_ident!("Default"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gluon_parser::parse_idl;
+
+    fn make_ctx(protocol: gluon_parser::Protocol) -> (LocalProtocol, Derives) {
+        let local = LocalProtocol {
+            rust_module: "test".to_string(),
+            protocol,
+        };
+        (local, Derives::empty())
+    }
+
+    #[test]
+    fn recursive_struct_direct() {
+        // Node directly contains Option<Node> — Option is inline so needs Box
+        let (local, derives) = make_ctx(
+            parse_idl(
+                "test",
+                r#"
+                /// A linked list node
+                struct Node {
+                    value: u32,
+                    next: Option<Node>,
+                }
+            "#,
+            )
+            .unwrap(),
+        );
+        let gen_ctx = GenCtx {
+            curr_protocol: &local,
+            other_local_protocols: &[],
+            external_protocols: &[],
+            requested_derives: derives,
+        };
+        let def = &local.protocol.structs.iter().find(|(n, _)| n == "Node").unwrap().1;
+        let tokens = gen_struct(def, &gen_ctx).to_string();
+        assert!(tokens.contains("Box"), "expected Box for direct recursive struct:\n{tokens}");
+    }
+
+    #[test]
+    fn recursive_enum_direct() {
+        // Tree enum whose Branch variant embeds Tree directly
+        let (local, derives) = make_ctx(
+            parse_idl(
+                "test",
+                r#"
+                /// A binary tree
+                enum Tree {
+                    Leaf {
+                        value: u32,
+                    },
+                    Branch {
+                        left: Tree,
+                        right: Tree,
+                    },
+                }
+            "#,
+            )
+            .unwrap(),
+        );
+        let gen_ctx = GenCtx {
+            curr_protocol: &local,
+            other_local_protocols: &[],
+            external_protocols: &[],
+            requested_derives: derives,
+        };
+        let def = &local.protocol.enums.iter().find(|(n, _)| n == "Tree").unwrap().1;
+        let tokens = gen_enum(def, &gen_ctx).to_string();
+        assert!(tokens.contains("Box"), "expected Box for recursive enum:\n{tokens}");
+    }
+
+    #[test]
+    fn recursive_mutual_struct_enum() {
+        // Expr → Node → Expr is a mutual cycle; both should be boxed
+        let (local, derives) = make_ctx(
+            parse_idl(
+                "test",
+                r#"
+                /// An expression
+                enum Expr {
+                    Lit {
+                        value: u32,
+                    },
+                    Add {
+                        node: Node,
+                    },
+                }
+
+                /// A binary node
+                struct Node {
+                    left: Expr,
+                    right: Expr,
+                }
+            "#,
+            )
+            .unwrap(),
+        );
+        let gen_ctx = GenCtx {
+            curr_protocol: &local,
+            other_local_protocols: &[],
+            external_protocols: &[],
+            requested_derives: derives,
+        };
+
+        let expr_def = &local.protocol.enums.iter().find(|(n, _)| n == "Expr").unwrap().1;
+        let node_def = &local.protocol.structs.iter().find(|(n, _)| n == "Node").unwrap().1;
+
+        let expr_tokens = gen_enum(expr_def, &gen_ctx).to_string();
+        let node_tokens = gen_struct(node_def, &gen_ctx).to_string();
+
+        assert!(
+            expr_tokens.contains("Box"),
+            "expected Box in Expr (mutual recursion):\n{expr_tokens}"
+        );
+        assert!(
+            node_tokens.contains("Box"),
+            "expected Box in Node (mutual recursion):\n{node_tokens}"
+        );
+    }
+
+    #[test]
+    fn vec_breaks_recursion_no_box() {
+        // Vec is heap-allocated, so children: Vec<Node> should NOT trigger boxing
+        let (local, derives) = make_ctx(
+            parse_idl(
+                "test",
+                r#"
+                /// A tree node with heap-allocated children
+                struct TreeNode {
+                    value: u32,
+                    children: Vec<TreeNode>,
+                }
+            "#,
+            )
+            .unwrap(),
+        );
+        let gen_ctx = GenCtx {
+            curr_protocol: &local,
+            other_local_protocols: &[],
+            external_protocols: &[],
+            requested_derives: derives,
+        };
+        let def = &local.protocol.structs.iter().find(|(n, _)| n == "TreeNode").unwrap().1;
+        let tokens = gen_struct(def, &gen_ctx).to_string();
+        assert!(
+            !tokens.contains("Box"),
+            "did not expect Box for Vec<T> recursion:\n{tokens}"
+        );
+    }
+
+    #[test]
+    fn non_recursive_no_box() {
+        let (local, derives) = make_ctx(
+            parse_idl(
+                "test",
+                r#"
+                /// A simple point
+                struct Point {
+                    x: f32,
+                    y: f32,
+                }
+            "#,
+            )
+            .unwrap(),
+        );
+        let gen_ctx = GenCtx {
+            curr_protocol: &local,
+            other_local_protocols: &[],
+            external_protocols: &[],
+            requested_derives: derives,
+        };
+        let def = &local.protocol.structs.iter().find(|(n, _)| n == "Point").unwrap().1;
+        let tokens = gen_struct(def, &gen_ctx).to_string();
+        assert!(
+            !tokens.contains("Box"),
+            "did not expect Box for non-recursive struct:\n{tokens}"
+        );
+    }
 }
