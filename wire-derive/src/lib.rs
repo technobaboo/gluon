@@ -11,6 +11,7 @@ use syn::{DeriveInput, parse_macro_input};
 pub fn derive_handler(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     #[cfg(feature = "tracing")]
     let handle = quote! {
@@ -81,7 +82,7 @@ pub fn derive_handler(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl binderbinder::TransactionHandler for #name {
+        impl #impl_generics binderbinder::TransactionHandler for #name #ty_generics #where_clause {
             #handle
             #handle_one_way
         }

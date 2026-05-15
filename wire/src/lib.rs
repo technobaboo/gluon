@@ -333,6 +333,89 @@ impl ReturnHandler {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::marker::PhantomData;
+
+    use binderbinder::TransactionHandler;
+
+    // The derive emits `gluon_wire::` paths; alias this crate so those paths
+    // resolve when the tests are compiled as part of `gluon-wire` itself.
+    extern crate self as gluon_wire;
+
+    use super::*;
+
+    fn assert_handler<T: TransactionHandler>() {}
+
+    // --- plain struct ---
+
+    #[derive(Debug, Handler)]
+    struct PlainHandler;
+
+    impl PlainHandler {
+        async fn dispatch_one_way(
+            &self,
+            _code: u32,
+            _data: GluonDataReader,
+            _ctx: GluonCtx,
+        ) -> Result<(), GluonSendError> {
+            Ok(())
+        }
+    }
+
+    // --- generic struct (bounds on type param) ---
+
+    #[derive(Debug, Handler)]
+    struct GenericHandler<T: std::fmt::Debug + Send + Sync + 'static>(PhantomData<T>);
+
+    impl<T: std::fmt::Debug + Send + Sync + 'static> GenericHandler<T> {
+        async fn dispatch_one_way(
+            &self,
+            _code: u32,
+            _data: GluonDataReader,
+            _ctx: GluonCtx,
+        ) -> Result<(), GluonSendError> {
+            Ok(())
+        }
+    }
+
+    // --- generic struct (bounds in where clause) ---
+
+    #[derive(Debug, Handler)]
+    struct WhereHandler<T>(PhantomData<T>)
+    where
+        T: std::fmt::Debug + Send + Sync + 'static;
+
+    impl<T> WhereHandler<T>
+    where
+        T: std::fmt::Debug + Send + Sync + 'static,
+    {
+        async fn dispatch_one_way(
+            &self,
+            _code: u32,
+            _data: GluonDataReader,
+            _ctx: GluonCtx,
+        ) -> Result<(), GluonSendError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn plain_handler_is_transaction_handler() {
+        assert_handler::<PlainHandler>();
+    }
+
+    #[test]
+    fn generic_handler_is_transaction_handler() {
+        assert_handler::<GenericHandler<u32>>();
+    }
+
+    #[test]
+    fn where_clause_handler_is_transaction_handler() {
+        assert_handler::<WhereHandler<String>>();
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Derives: u32 {
