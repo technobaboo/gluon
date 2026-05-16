@@ -1,4 +1,5 @@
 pub mod primitive_impls;
+pub use binderbinder::binder_object::BinderObject as Object;
 pub use gluon_derive::Handler;
 
 use binderbinder::{

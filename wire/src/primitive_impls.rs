@@ -1,12 +1,10 @@
+use crate::{Convertable, ReadError, WriteError};
+use binderbinder::binder_object::BinderObjectOrRef;
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
     os::fd::{AsFd, OwnedFd},
 };
-
-use binderbinder::binder_object::BinderObjectOrRef;
-
-use crate::{Convertable, ReadError, WriteError};
 
 impl<T: Convertable> Convertable for Box<T> {
     fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
