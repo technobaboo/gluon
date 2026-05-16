@@ -277,7 +277,7 @@ impl gluon::Convertable for Color {
 }
 #[derive(Debug, Clone)]
 pub struct Test {
-    obj: binderbinder::binder_object::BinderObjectOrRef,
+    obj: gluon::ObjectOrRef,
 }
 impl gluon::Convertable for Test {
     fn write<'a, 'b: 'a>(
@@ -287,7 +287,7 @@ impl gluon::Convertable for Test {
         self.obj.write(gluon_data)
     }
     fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
-        let obj = binderbinder::binder_object::BinderObjectOrRef::read(gluon_data)?;
+        let obj = gluon::ObjectOrRef::read(gluon_data)?;
         Ok(Test::from_object_or_ref(obj))
     }
     fn write_owned(
@@ -365,25 +365,17 @@ impl Test {
             __w.into()
         })
     }
-    pub fn from_handler<H: TestHandler>(
-        obj: &impl binderbinder::binder_object::OwnedBinderObjectRefTrait<H>,
-    ) -> Test {
-        Test::from_object_or_ref(
-            binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(
-                obj,
-            ),
-        )
+    pub fn from_handler<H: TestHandler>(obj: &impl gluon::OwnedObjectRef<H>) -> Test {
+        Test::from_object_or_ref(gluon::OwnedObjectRef::to_object_or_ref(obj))
     }
     ///only use this when you know the binder ref implements this interface, else the consquences are for you to find out
-    pub fn from_object_or_ref(
-        obj: binderbinder::binder_object::BinderObjectOrRef,
-    ) -> Test {
+    pub fn from_object_or_ref(obj: gluon::ObjectOrRef) -> Test {
         Test { obj }
     }
 }
-impl binderbinder::binder_object::ToBinderObjectOrRef for Test {
-    fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
-        self.obj.to_binder_object_or_ref()
+impl From<Test> for gluon::ObjectOrRef {
+    fn from(value: Test) -> Self {
+        value.obj
     }
 }
 impl std::hash::Hash for Test {
@@ -397,7 +389,7 @@ impl PartialEq for Test {
     }
 }
 impl Eq for Test {}
-pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 'static {
+pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
     fn quit(&self, _ctx: gluon::Context) -> impl Future<Output = ()> + Send + Sync;
     fn ping(&self, _ctx: gluon::Context) -> impl Future<Output = ()> + Send + Sync;
     fn echo(

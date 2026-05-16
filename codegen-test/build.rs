@@ -1,5 +1,4 @@
-use gluon_codegen::helpers::gen_multiple_modules;
-use gluon_codegen::{Derives, TypeProxy};
+use gluon_codegen::{Derives, TypeProxy, helpers::gen_multiple_modules};
 use std::path::Path;
 
 fn main() {

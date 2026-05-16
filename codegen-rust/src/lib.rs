@@ -398,7 +398,7 @@ pub fn gen_interface(
             }
         });
         quote! {
-            pub trait #handler_name: binderbinder::device::TransactionHandler + Send + Sync + 'static {
+            pub trait #handler_name: gluon::Handler + Send + Sync + 'static {
                 #(#methods)*
 
                 fn dispatch_one_way(&self, transaction_code: u32, mut gluon_data: gluon::DataReader, ctx: gluon::Context) -> impl Future<Output=Result<(),gluon::SendError>> + Send + Sync {
@@ -504,7 +504,7 @@ pub fn gen_interface(
         quote! {
             #[derive(Debug, Clone)]
             pub struct #name {
-                obj: binderbinder::binder_object::BinderObjectOrRef,
+                obj: gluon::ObjectOrRef,
             }
 
             impl gluon::Convertable for #name {
@@ -516,7 +516,7 @@ pub fn gen_interface(
                 }
 
                 fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
-                    let obj = binderbinder::binder_object::BinderObjectOrRef::read(gluon_data)?;
+                    let obj = gluon::ObjectOrRef::read(gluon_data)?;
                     Ok(#name::from_object_or_ref(obj))
                 }
 
@@ -526,19 +526,19 @@ pub fn gen_interface(
             }
             impl #name {
                 #(#methods)*
-                pub fn from_handler<H: #handler_name>(obj: &impl binderbinder::binder_object::OwnedBinderObjectRefTrait<H>) -> #name {
-                    #name::from_object_or_ref(binderbinder::binder_object::ToBinderObjectOrRef::to_binder_object_or_ref(obj))
+                pub fn from_handler<H: #handler_name>(obj: &impl gluon::OwnedObjectRef<H>) -> #name {
+                    #name::from_object_or_ref(gluon::OwnedObjectRef::to_object_or_ref(obj))
                 }
                 #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
-                pub fn from_object_or_ref(obj: binderbinder::binder_object::BinderObjectOrRef) -> #name {
+                pub fn from_object_or_ref(obj: gluon::ObjectOrRef) -> #name {
                     #name {
                         obj,
                     }
                 }
             }
-            impl binderbinder::binder_object::ToBinderObjectOrRef for #name {
-                fn to_binder_object_or_ref(&self) -> binderbinder::binder_object::BinderObjectOrRef {
-                    self.obj.to_binder_object_or_ref()
+            impl From<#name> for gluon::ObjectOrRef {
+                fn from(value: #name) -> Self {
+                    value.obj
                 }
             }
             impl std::hash::Hash for #name {
@@ -985,7 +985,7 @@ pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
         Type::Fd => quote! {std::os::fd::OwnedFd},
         Type::Ref(ref_type) => match ref_type {
             Some(custom) => gen_custom_type(custom, gen_ctx),
-            None => quote! {binderbinder::binder_object::BinderObjectOrRef},
+            None => quote! {gluon::ObjectOrRef},
         },
         Type::Custom(custom) => gen_custom_type(custom, gen_ctx),
         Type::Array(type_def, len) => {

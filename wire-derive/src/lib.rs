@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, parse_macro_input};
 
-/// Implements `binderbinder::TransactionHandler` for a type that implements a
+/// Implements `gluon::Handler` for a type that implements a
 /// generated `{Name}Handler` trait (which provides `dispatch_one_way`).
 ///
 /// Equivalent to the `impl_transaction_handler!` declarative macro but usable
@@ -17,22 +17,22 @@ pub fn derive_handler(input: TokenStream) -> TokenStream {
     let handle = quote! {
         async fn handle(
             self: std::sync::Arc<Self>,
-            _transaction: binderbinder::device::Transaction,
-        ) -> binderbinder::payload::PayloadBuilder<'static> {
+            _transaction: gluon::Transaction,
+        ) -> gluon::PayloadBuilder<'static> {
             tracing::warn!(concat!(
                 "Received two way transaction for ",
                 stringify!(#name)
             ));
-            binderbinder::payload::PayloadBuilder::new()
+            gluon::PayloadBuilder::new()
         }
     };
     #[cfg(not(feature = "tracing"))]
     let handle = quote! {
         async fn handle(
             self: std::sync::Arc<Self>,
-            _transaction: binderbinder::device::Transaction,
-        ) -> binderbinder::payload::PayloadBuilder<'static> {
-            binderbinder::payload::PayloadBuilder::new()
+            _transaction: gluon::Transaction,
+        ) -> gluon::PayloadBuilder<'static> {
+            gluon::PayloadBuilder::new()
         }
     };
 
@@ -40,7 +40,7 @@ pub fn derive_handler(input: TokenStream) -> TokenStream {
     let handle_one_way = quote! {
         async fn handle_one_way(
             self: std::sync::Arc<Self>,
-            transaction: binderbinder::device::Transaction,
+            transaction: gluon::Transaction,
         ) {
             let gluon_data = gluon::DataReader::from_payload(transaction.payload);
             _ = self
@@ -65,7 +65,7 @@ pub fn derive_handler(input: TokenStream) -> TokenStream {
     let handle_one_way = quote! {
         async fn handle_one_way(
             self: std::sync::Arc<Self>,
-            transaction: binderbinder::device::Transaction,
+            transaction: gluon::Transaction,
         ) {
             let gluon_data = gluon::DataReader::from_payload(transaction.payload);
             _ = self
@@ -82,7 +82,7 @@ pub fn derive_handler(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl #impl_generics binderbinder::TransactionHandler for #name #ty_generics #where_clause {
+        impl #impl_generics gluon::Handler for #name #ty_generics #where_clause {
             #handle
             #handle_one_way
         }

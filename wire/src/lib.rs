@@ -1,12 +1,19 @@
 pub mod primitive_impls;
-pub use binderbinder::binder_object::BinderObject as Object;
+pub use binderbinder::{
+    TransactionHandler as Handler,
+    binder_object::{
+        BinderObject as Object, BinderObjectOrRef as ObjectOrRef,
+        OwnedBinderObjectRefTrait as OwnedObjectRef,
+    },
+    device::Transaction,
+    payload::PayloadBuilder,
+};
 pub use gluon_derive::Handler;
 
 use binderbinder::{
     TransactionHandler,
     binder_object::{BinderObjectOrRef, ToBinderObjectOrRef},
-    device::Transaction,
-    payload::{PayloadBinderRefReadError, PayloadBuilder, PayloadObjectReadError, PayloadReader},
+    payload::{PayloadBinderRefReadError, PayloadObjectReadError, PayloadReader},
 };
 use rustix::process::{RawPid, RawUid};
 use std::{
