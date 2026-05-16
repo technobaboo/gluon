@@ -66,7 +66,7 @@ impl gluon_wire::GluonConvertable for TestStruct {
 }
 ///Test enum
 #[derive(Debug)]
-pub(crate) enum TestEnum {
+pub enum TestEnum {
     TestStruct { test_struct: TestStruct },
     Fd { fd: std::os::fd::OwnedFd },
     EmptyVariant,

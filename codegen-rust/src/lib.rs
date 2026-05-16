@@ -16,6 +16,8 @@ pub struct ExternalProtocol {
     pub external_protocol: ExternalGluonProtocol,
 }
 pub struct LocalProtocol {
+    /// Short module name (e.g. `"test"`, `"types"`), used to match `TypeProxy` prefixes.
+    pub module_name: String,
     pub rust_module: String,
     pub protocol: Protocol,
 }
@@ -121,13 +123,22 @@ pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream
     }
 }
 /// Returns the proxy rust type for a protocol type if one is registered, else `None`.
+///
+/// `protocol_type_name` in `TypeProxy` must be of the form `"module::TypeName"` where `module`
+/// matches [`LocalProtocol::module_name`] of the protocol currently being generated.
 fn find_proxy(ty: &Type, gen_ctx: &GenCtx) -> Option<proc_macro2::TokenStream> {
-    if let Type::Custom(CustomType::Named(name)) = ty {
-        gen_ctx
-            .type_proxies
-            .iter()
-            .find(|p| &p.protocol_type_name == name)
-            .map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
+    if let Type::Custom(CustomType::Named(type_name)) = ty {
+        gen_ctx.type_proxies.iter().find(|p| {
+            match p.protocol_type_name.split_once("::") {
+                Some((prefix, name)) => {
+                    prefix == gen_ctx.curr_protocol.module_name && name == type_name
+                }
+                None => panic!(
+                    "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
+                    p.protocol_type_name
+                ),
+            }
+        }).map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
     } else {
         None
     }
@@ -976,6 +987,7 @@ mod tests {
 
     fn make_ctx(protocol: gluon_parser::Protocol) -> (LocalProtocol, Derives) {
         let local = LocalProtocol {
+            module_name: "test".to_string(),
             rust_module: "test".to_string(),
             protocol,
         };

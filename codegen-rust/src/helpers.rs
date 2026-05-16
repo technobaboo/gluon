@@ -33,6 +33,7 @@ pub fn gen_multiple_modules(
             (
                 *name,
                 LocalProtocol {
+                    module_name: mod_name.clone(),
                     rust_module: format!("super::{mod_name}"),
                     protocol: parse_idl(gluon_filename, &proto_str).unwrap(),
                 },
@@ -85,7 +86,7 @@ pub fn gen_single_module(
     let proto = parse_idl(gluon_filename, &proto_str).unwrap();
     let module = gen_module(
         &LocalProtocol {
-            // this should only matter when getting imported by a local module
+            module_name: gluon_filename.to_string(),
             rust_module: String::new(),
             protocol: proto,
         },

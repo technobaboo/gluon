@@ -16,7 +16,7 @@ fn main() {
         &[],
         Derives::all(),
         &[TypeProxy {
-            protocol_type_name: "TestEnum".into(),
+            protocol_type_name: "test::TestEnum".into(),
             rust_type: "crate::MyTestEnum".into(),
         }],
         "./src/protocol",
