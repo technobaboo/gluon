@@ -87,7 +87,7 @@ pub fn gen_module(
         .map(|(_name, def)| gen_enum(def, gen_ctx));
     let external_proto_const = gen_external_protocol_const(gen_ctx);
     quote! {
-        #![allow(unused, clippy::single_match, clippy::match_single_binding, clippy::large_enum_variant, private_bounds, private_interfaces)]
+        #![allow(unused, clippy::all, private_bounds, private_interfaces)]
         use gluon_wire::GluonConvertable;
         #external_proto_const
         #(#structs)*
@@ -137,7 +137,10 @@ fn proxy_matches(p: &TypeProxy, type_name: &str, gen_ctx: &GenCtx) -> bool {
 
 /// Finds the registered proxy for a bare type name within the current protocol.
 fn find_proxy_by_name<'a>(type_name: &str, gen_ctx: &'a GenCtx) -> Option<&'a TypeProxy> {
-    gen_ctx.type_proxies.iter().find(|p| proxy_matches(p, type_name, gen_ctx))
+    gen_ctx
+        .type_proxies
+        .iter()
+        .find(|p| proxy_matches(p, type_name, gen_ctx))
 }
 
 /// Finds the registered proxy for a qualified type (`namespace::TypeName`), resolving the import
@@ -147,15 +150,25 @@ fn find_proxy_for_qualified<'a>(
     type_name: &str,
     gen_ctx: &'a GenCtx,
 ) -> Option<&'a TypeProxy> {
-    let import = gen_ctx.curr_protocol.imports.iter().find(|v| v.alias == namespace)?;
-    let target = gen_ctx.other_local_protocols.iter().find(|v| v.name == import.name)?;
-    gen_ctx.type_proxies.iter().find(|p| match p.protocol_type_name.split_once("::") {
-        Some((prefix, name)) => prefix == target.module_name && name == type_name,
-        None => panic!(
-            "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
-            p.protocol_type_name
-        ),
-    })
+    let import = gen_ctx
+        .curr_protocol
+        .imports
+        .iter()
+        .find(|v| v.alias == namespace)?;
+    let target = gen_ctx
+        .other_local_protocols
+        .iter()
+        .find(|v| v.name == import.name)?;
+    gen_ctx
+        .type_proxies
+        .iter()
+        .find(|p| match p.protocol_type_name.split_once("::") {
+            Some((prefix, name)) => prefix == target.module_name && name == type_name,
+            None => panic!(
+                "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
+                p.protocol_type_name
+            ),
+        })
 }
 
 /// Finds the registered proxy for a `Type`, returning its parsed `TokenStream`.
@@ -167,7 +180,11 @@ fn find_proxy(ty: &Type, gen_ctx: &GenCtx) -> Option<proc_macro2::TokenStream> {
         }
         _ => None,
     };
-    proxy.map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
+    proxy.map(|p| {
+        p.rust_type
+            .parse()
+            .expect("TypeProxy::rust_type is not a valid token stream")
+    })
 }
 
 /// Like `gen_type` but substitutes the proxy rust type when one is registered,
@@ -361,7 +378,9 @@ pub fn gen_interface(
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
             let return_types = method.returns.as_ref().map(|v| {
-                v.iter().map(|v| gen_public_type(&v.ty, gen_ctx)).collect::<Vec<_>>()
+                v.iter()
+                    .map(|v| gen_public_type(&v.ty, gen_ctx))
+                    .collect::<Vec<_>>()
             });
             let fn_return = match return_types.as_deref() {
                 None => quote! { -> impl Future<Output=()> + Send + Sync },
@@ -625,10 +644,14 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
     } else {
         quote! { pub }
     };
-    let fields = def
-        .fields
-        .iter()
-        .map(|f| gen_field_struct(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx), is_proxied));
+    let fields = def.fields.iter().map(|f| {
+        gen_field_struct(
+            f,
+            gen_ctx,
+            type_is_recursive(&f.ty, &def.name, gen_ctx),
+            is_proxied,
+        )
+    });
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(struct_supported_derives(def, gen_ctx));
     let name = format_ident!("{}", name);
@@ -710,9 +733,10 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
 
 pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     let variants = def.variants.iter().map(|variant| {
-        let fields = variant.fields.iter().map(|f| {
-            gen_field_enum(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx))
-        });
+        let fields = variant
+            .fields
+            .iter()
+            .map(|f| gen_field_enum(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx)));
         let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
         let doc_comment = variant.doc.as_ref().map(|str| quote! {#[doc = #str]});
         if !variant.fields.is_empty() {
@@ -741,7 +765,9 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     let doc = &def.doc;
     let gluon_trait_impl = {
         let write_variants = def.variants.iter().enumerate().map(|(i, variant)| {
-            let field_names = variant.fields.iter()
+            let field_names = variant
+                .fields
+                .iter()
                 .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
@@ -768,7 +794,9 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             }
         });
         let write_owned_variants = def.variants.iter().enumerate().map(|(i, variant)| {
-            let field_names = variant.fields.iter()
+            let field_names = variant
+                .fields
+                .iter()
                 .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
@@ -795,7 +823,9 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             }
         });
         let read_variants = def.variants.iter().enumerate().map(|(i, variant)| {
-            let field_names = variant.fields.iter()
+            let field_names = variant
+                .fields
+                .iter()
                 .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
@@ -880,7 +910,12 @@ pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2
         #name: #type_def,
     }
 }
-pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx, boxed: bool, parent_is_proxied: bool) -> proc_macro2::TokenStream {
+pub fn gen_field_struct(
+    def: &Field,
+    gen_ctx: &GenCtx,
+    boxed: bool,
+    parent_is_proxied: bool,
+) -> proc_macro2::TokenStream {
     let type_def = gen_public_type(&def.ty, gen_ctx);
     let type_def = if boxed {
         quote! { Box<#type_def> }
@@ -1219,9 +1254,18 @@ mod tests {
             requested_derives: derives,
             type_proxies: &[],
         };
-        let def = &local.protocol.structs.iter().find(|(n, _)| n == "Node").unwrap().1;
+        let def = &local
+            .protocol
+            .structs
+            .iter()
+            .find(|(n, _)| n == "Node")
+            .unwrap()
+            .1;
         let tokens = gen_struct(def, &gen_ctx).to_string();
-        assert!(tokens.contains("Box"), "expected Box for direct recursive struct:\n{tokens}");
+        assert!(
+            tokens.contains("Box"),
+            "expected Box for direct recursive struct:\n{tokens}"
+        );
     }
 
     #[test]
@@ -1252,9 +1296,18 @@ mod tests {
             requested_derives: derives,
             type_proxies: &[],
         };
-        let def = &local.protocol.enums.iter().find(|(n, _)| n == "Tree").unwrap().1;
+        let def = &local
+            .protocol
+            .enums
+            .iter()
+            .find(|(n, _)| n == "Tree")
+            .unwrap()
+            .1;
         let tokens = gen_enum(def, &gen_ctx).to_string();
-        assert!(tokens.contains("Box"), "expected Box for recursive enum:\n{tokens}");
+        assert!(
+            tokens.contains("Box"),
+            "expected Box for recursive enum:\n{tokens}"
+        );
     }
 
     #[test]
@@ -1291,8 +1344,20 @@ mod tests {
             type_proxies: &[],
         };
 
-        let expr_def = &local.protocol.enums.iter().find(|(n, _)| n == "Expr").unwrap().1;
-        let node_def = &local.protocol.structs.iter().find(|(n, _)| n == "Node").unwrap().1;
+        let expr_def = &local
+            .protocol
+            .enums
+            .iter()
+            .find(|(n, _)| n == "Expr")
+            .unwrap()
+            .1;
+        let node_def = &local
+            .protocol
+            .structs
+            .iter()
+            .find(|(n, _)| n == "Node")
+            .unwrap()
+            .1;
 
         let expr_tokens = gen_enum(expr_def, &gen_ctx).to_string();
         let node_tokens = gen_struct(node_def, &gen_ctx).to_string();
@@ -1330,7 +1395,13 @@ mod tests {
             requested_derives: derives,
             type_proxies: &[],
         };
-        let def = &local.protocol.structs.iter().find(|(n, _)| n == "TreeNode").unwrap().1;
+        let def = &local
+            .protocol
+            .structs
+            .iter()
+            .find(|(n, _)| n == "TreeNode")
+            .unwrap()
+            .1;
         let tokens = gen_struct(def, &gen_ctx).to_string();
         assert!(
             !tokens.contains("Box"),
@@ -1360,7 +1431,13 @@ mod tests {
             requested_derives: derives,
             type_proxies: &[],
         };
-        let def = &local.protocol.structs.iter().find(|(n, _)| n == "Point").unwrap().1;
+        let def = &local
+            .protocol
+            .structs
+            .iter()
+            .find(|(n, _)| n == "Point")
+            .unwrap()
+            .1;
         let tokens = gen_struct(def, &gen_ctx).to_string();
         assert!(
             !tokens.contains("Box"),
