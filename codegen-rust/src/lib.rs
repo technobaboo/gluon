@@ -210,11 +210,16 @@ pub fn gen_interface(
     let proxy = {
         let methods = def.methods.iter().enumerate().map(|(i, method)| {
             let params = method.params.iter().map(|param| {
-                let type_def = gen_type(&param.ty,gen_ctx);
+                let type_def = gen_type(&param.ty, gen_ctx);
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
                 quote! {
-                    #name: #type_def
+                    #name: impl Into<#type_def>
                 }
+            }).collect::<Vec<_>>();
+            let params_convert = method.params.iter().map(|param| {
+                let type_def = gen_type(&param.ty, gen_ctx);
+                let name = format_ident!("{}", param.name.to_case(Case::Snake));
+                quote! { let #name: #type_def = #name.into(); }
             }).collect::<Vec<_>>();
             let params_write = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
@@ -247,6 +252,7 @@ pub fn gen_interface(
                     quote! {
                         #doc_comment
                         pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
+                            #(#params_convert)*
                             let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
                             let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
                             let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -264,6 +270,7 @@ pub fn gen_interface(
                 None => quote! {
                     #doc_comment
                     pub fn #name(&self, #(#params),*) -> Result<(), gluon_wire::GluonSendError> {
+                        #(#params_convert)*
                         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
                         #(#params_write)*
                         self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;

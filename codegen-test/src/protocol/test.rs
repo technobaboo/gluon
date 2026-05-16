@@ -171,8 +171,9 @@ impl Test {
     }
     pub async fn echo(
         &self,
-        input: TestEnum,
+        input: impl Into<TestEnum>,
     ) -> Result<TestEnum, gluon_wire::GluonSendError> {
+        let input: TestEnum = input.into();
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -187,8 +188,9 @@ impl Test {
     }
     pub async fn echo_ref(
         &self,
-        input: Test,
+        input: impl Into<Test>,
     ) -> Result<Test, gluon_wire::GluonSendError> {
+        let input: Test = input.into();
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
