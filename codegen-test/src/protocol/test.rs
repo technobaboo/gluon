@@ -34,7 +34,7 @@ pub struct TestStruct {
     pub string: String,
     pub id: u64,
     pub binder_ref: Test,
-    pub position: super::types::Vec3,
+    pub position: crate::MyVec3,
 }
 impl gluon_wire::GluonConvertable for TestStruct {
     fn write<'a, 'b: 'a>(
@@ -44,7 +44,10 @@ impl gluon_wire::GluonConvertable for TestStruct {
         self.string.write(gluon_data)?;
         self.id.write(gluon_data)?;
         self.binder_ref.write(gluon_data)?;
-        self.position.write(gluon_data)?;
+        {
+            let __w: super::types::Vec3 = self.position.clone().into();
+            __w.write_owned(gluon_data)?;
+        }
         Ok(())
     }
     fn read(
@@ -53,7 +56,12 @@ impl gluon_wire::GluonConvertable for TestStruct {
         let string = gluon_wire::GluonConvertable::read(gluon_data)?;
         let id = gluon_wire::GluonConvertable::read(gluon_data)?;
         let binder_ref = gluon_wire::GluonConvertable::read(gluon_data)?;
-        let position = gluon_wire::GluonConvertable::read(gluon_data)?;
+        let position: crate::MyVec3 = {
+            let __w: super::types::Vec3 = gluon_wire::GluonConvertable::read(
+                gluon_data,
+            )?;
+            __w.into()
+        };
         Ok(TestStruct {
             string,
             id,
@@ -68,7 +76,10 @@ impl gluon_wire::GluonConvertable for TestStruct {
         self.string.write_owned(gluon_data)?;
         self.id.write_owned(gluon_data)?;
         self.binder_ref.write_owned(gluon_data)?;
-        self.position.write_owned(gluon_data)?;
+        {
+            let __w: super::types::Vec3 = self.position.into();
+            __w.write_owned(gluon_data)?;
+        }
         Ok(())
     }
 }
@@ -322,7 +333,7 @@ impl Test {
     }
     pub async fn get_position(
         &self,
-    ) -> Result<super::types::Vec3, gluon_wire::GluonSendError> {
+    ) -> Result<crate::MyVec3, gluon_wire::GluonSendError> {
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -332,7 +343,12 @@ impl Test {
             .transact_one_way(&self.obj, 12u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
-        Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
+        Ok({
+            let __w: super::types::Vec3 = gluon_wire::GluonConvertable::read(
+                &mut reader,
+            )?;
+            __w.into()
+        })
     }
     pub fn from_handler<H: TestHandler>(
         obj: &impl binderbinder::binder_object::OwnedBinderObjectRefTrait<H>,
@@ -382,7 +398,7 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
     fn get_position(
         &self,
         _ctx: gluon_wire::GluonCtx,
-    ) -> impl Future<Output = super::types::Vec3> + Send + Sync;
+    ) -> impl Future<Output = crate::MyVec3> + Send + Sync;
     fn dispatch_one_way(
         &self,
         transaction_code: u32,
@@ -439,7 +455,8 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
                     let mut gluon_out = gluon_wire::GluonDataBuilder::new();
                     let (position) = self.get_position(ctx).await;
                     drop(gluon_data);
-                    position.write_owned(&mut gluon_out)?;
+                    let __w: super::types::Vec3 = position.into();
+                    __w.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
                         .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;

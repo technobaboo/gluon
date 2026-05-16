@@ -31,6 +31,25 @@ impl From<MyTestEnum> for protocol::test::TestEnum {
     }
 }
 
+/// Proxy type for the wire `types::Vec3` — demonstrates cross-protocol proxying.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MyVec3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl From<protocol::types::Vec3> for MyVec3 {
+    fn from(v: protocol::types::Vec3) -> Self {
+        MyVec3 { x: v.x, y: v.y, z: v.z }
+    }
+}
+impl From<MyVec3> for protocol::types::Vec3 {
+    fn from(v: MyVec3) -> Self {
+        protocol::types::Vec3 { x: v.x, y: v.y, z: v.z }
+    }
+}
+
 impl From<protocol::test::Color> for MyColor {
     fn from(c: protocol::test::Color) -> Self {
         match c {
@@ -79,12 +98,8 @@ impl TestHandler for TestHandlerImpl {
         input
     }
 
-    async fn get_position(&self, _ctx: GluonCtx) -> protocol::types::Vec3 {
-        protocol::types::Vec3 {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        }
+    async fn get_position(&self, _ctx: GluonCtx) -> MyVec3 {
+        MyVec3 { x: 1.0, y: 2.0, z: 3.0 }
     }
 }
 
@@ -116,6 +131,18 @@ mod tests {
             let back = Color::from(proxy);
             assert_eq!(MyColor::from(back), expected);
         }
+    }
+
+    #[test]
+    fn cross_protocol_vec3_round_trips() {
+        use protocol::types::Vec3;
+        let wire = Vec3 { x: 1.0, y: 2.0, z: 3.0 };
+        let proxy = MyVec3::from(wire);
+        assert_eq!(proxy, MyVec3 { x: 1.0, y: 2.0, z: 3.0 });
+        let back = Vec3::from(proxy);
+        assert_eq!(back.x, 1.0);
+        assert_eq!(back.y, 2.0);
+        assert_eq!(back.z, 3.0);
     }
 
     #[test]

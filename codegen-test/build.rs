@@ -25,6 +25,11 @@ fn main() {
                 rust_type: "crate::MyColor".into(),
                 derives: Derives::COPY | Derives::CLONE | Derives::HASH | Derives::PARTIAL_EQ | Derives::EQ,
             },
+            TypeProxy {
+                protocol_type_name: "types::Vec3".into(),
+                rust_type: "crate::MyVec3".into(),
+                derives: Derives::COPY | Derives::CLONE | Derives::PARTIAL_EQ,
+            },
         ],
         "./src/protocol",
     );

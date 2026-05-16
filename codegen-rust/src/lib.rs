@@ -140,14 +140,34 @@ fn find_proxy_by_name<'a>(type_name: &str, gen_ctx: &'a GenCtx) -> Option<&'a Ty
     gen_ctx.type_proxies.iter().find(|p| proxy_matches(p, type_name, gen_ctx))
 }
 
+/// Finds the registered proxy for a qualified type (`namespace::TypeName`), resolving the import
+/// alias to the target protocol's `module_name` before matching.
+fn find_proxy_for_qualified<'a>(
+    namespace: &str,
+    type_name: &str,
+    gen_ctx: &'a GenCtx,
+) -> Option<&'a TypeProxy> {
+    let import = gen_ctx.curr_protocol.imports.iter().find(|v| v.alias == namespace)?;
+    let target = gen_ctx.other_local_protocols.iter().find(|v| v.name == import.name)?;
+    gen_ctx.type_proxies.iter().find(|p| match p.protocol_type_name.split_once("::") {
+        Some((prefix, name)) => prefix == target.module_name && name == type_name,
+        None => panic!(
+            "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
+            p.protocol_type_name
+        ),
+    })
+}
+
 /// Finds the registered proxy for a `Type`, returning its parsed `TokenStream`.
 fn find_proxy(ty: &Type, gen_ctx: &GenCtx) -> Option<proc_macro2::TokenStream> {
-    if let Type::Custom(CustomType::Named(type_name)) = ty {
-        find_proxy_by_name(type_name, gen_ctx)
-            .map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
-    } else {
-        None
-    }
+    let proxy = match ty {
+        Type::Custom(CustomType::Named(type_name)) => find_proxy_by_name(type_name, gen_ctx),
+        Type::Custom(CustomType::Qualified(namespace, type_name)) => {
+            find_proxy_for_qualified(namespace, type_name, gen_ctx)
+        }
+        _ => None,
+    };
+    proxy.map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
 }
 
 /// Like `gen_type` but substitutes the proxy rust type when one is registered.
@@ -921,6 +941,9 @@ fn custom_type_derives_inner(
             derives_from_protocol_inner(name, gen_ctx, visiting)
         }
         CustomType::Qualified(namespace, type_name) => {
+            if let Some(proxy) = find_proxy_for_qualified(namespace, type_name, gen_ctx) {
+                return gen_ctx.requested_derives & proxy.derives;
+            }
             let import = gen_ctx
                 .curr_protocol
                 .imports

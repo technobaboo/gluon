@@ -18,10 +18,10 @@ pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::Ext
 };
 ///3D vector
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
-pub struct Vec3 {
-    pub x: f32,
-    pub y: f32,
-    pub z: f32,
+pub(crate) struct Vec3 {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) z: f32,
 }
 impl gluon_wire::GluonConvertable for Vec3 {
     fn write<'a, 'b: 'a>(
