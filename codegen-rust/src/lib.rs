@@ -170,9 +170,116 @@ fn find_proxy(ty: &Type, gen_ctx: &GenCtx) -> Option<proc_macro2::TokenStream> {
     proxy.map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
 }
 
-/// Like `gen_type` but substitutes the proxy rust type when one is registered.
+/// Like `gen_type` but substitutes the proxy rust type when one is registered,
+/// recursing into container types (Option, Vec, Array, Set, Map, Result).
 fn gen_public_type(ty: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
-    find_proxy(ty, gen_ctx).unwrap_or_else(|| gen_type(ty, gen_ctx))
+    if let Some(proxy_ts) = find_proxy(ty, gen_ctx) {
+        return proxy_ts;
+    }
+    match ty {
+        Type::Option(inner) => {
+            let inner = gen_public_type(inner, gen_ctx);
+            quote! { Option<#inner> }
+        }
+        Type::Vec(inner) => {
+            let inner = gen_public_type(inner, gen_ctx);
+            quote! { Vec<#inner> }
+        }
+        Type::Array(inner, len) => {
+            let inner = gen_public_type(inner, gen_ctx);
+            quote! { [#inner; #len] }
+        }
+        Type::Set(inner) => {
+            let inner = gen_public_type(inner, gen_ctx);
+            quote! { std::collections::HashSet<#inner> }
+        }
+        Type::Map(k, v) => {
+            let k = gen_public_type(k, gen_ctx);
+            let v = gen_public_type(v, gen_ctx);
+            quote! { std::collections::HashMap<#k, #v> }
+        }
+        Type::Result(ok, err) => {
+            let ok = gen_public_type(ok, gen_ctx);
+            let err = gen_public_type(err, gen_ctx);
+            quote! { Result<#ok, #err> }
+        }
+        _ => gen_type(ty, gen_ctx),
+    }
+}
+
+/// Returns true if `ty` contains a proxied type at any nesting depth.
+fn type_has_proxy(ty: &Type, gen_ctx: &GenCtx) -> bool {
+    if find_proxy(ty, gen_ctx).is_some() {
+        return true;
+    }
+    match ty {
+        Type::Option(inner) | Type::Vec(inner) | Type::Array(inner, _) | Type::Set(inner) => {
+            type_has_proxy(inner, gen_ctx)
+        }
+        Type::Map(k, v) => type_has_proxy(k, gen_ctx) || type_has_proxy(v, gen_ctx),
+        Type::Result(ok, err) => type_has_proxy(ok, gen_ctx) || type_has_proxy(err, gen_ctx),
+        _ => false,
+    }
+}
+
+/// Generates an expression that converts an owned wire-typed value (`expr`) to the public type.
+fn gen_wire_to_pub(
+    ty: &Type,
+    expr: proc_macro2::TokenStream,
+    gen_ctx: &GenCtx,
+) -> proc_macro2::TokenStream {
+    if find_proxy(ty, gen_ctx).is_some() {
+        return quote! { #expr.into() };
+    }
+    match ty {
+        Type::Option(inner) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_wire_to_pub(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.map(|__v| #conv) }
+        }
+        Type::Vec(inner) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_wire_to_pub(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.into_iter().map(|__v| #conv).collect() }
+        }
+        Type::Array(inner, _) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_wire_to_pub(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.map(|__v| #conv) }
+        }
+        Type::Set(inner) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_wire_to_pub(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.into_iter().map(|__v| #conv).collect() }
+        }
+        _ => expr,
+    }
+}
+
+/// Generates an expression that converts an owned public-typed value (`expr`) to the wire type.
+fn gen_pub_to_wire(
+    ty: &Type,
+    expr: proc_macro2::TokenStream,
+    gen_ctx: &GenCtx,
+) -> proc_macro2::TokenStream {
+    if find_proxy(ty, gen_ctx).is_some() {
+        return quote! { #expr.into() };
+    }
+    match ty {
+        Type::Option(inner) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_pub_to_wire(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.map(|__v| #conv) }
+        }
+        Type::Vec(inner) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_pub_to_wire(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.into_iter().map(|__v| #conv).collect() }
+        }
+        Type::Array(inner, _) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_pub_to_wire(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.map(|__v| #conv) }
+        }
+        Type::Set(inner) if type_has_proxy(inner, gen_ctx) => {
+            let conv = gen_pub_to_wire(inner, quote! { __v }, gen_ctx);
+            quote! { #expr.into_iter().map(|__v| #conv).collect() }
+        }
+        _ => expr,
+    }
 }
 
 pub fn gen_interface(
@@ -189,12 +296,14 @@ pub fn gen_interface(
             let i = i + 8;
             let names = method.params.iter().map(|v| format_ident!("param_{}", v.name)).collect::<Vec<_>>();
             let params = names.iter().zip(method.params.iter()).map(|(var, param)| {
-                if let Some(proxy_ty) = find_proxy(&param.ty, gen_ctx) {
+                if type_has_proxy(&param.ty, gen_ctx) {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
+                    let pub_ty = gen_public_type(&param.ty, gen_ctx);
+                    let conv = gen_wire_to_pub(&param.ty, quote! { __w }, gen_ctx);
                     quote! {
-                        let #var: #proxy_ty = {
+                        let #var: #pub_ty = {
                             let __w: #wire_ty = gluon_wire::GluonConvertable::read(&mut gluon_data)?;
-                            __w.into()
+                            #conv
                         };
                     }
                 } else {
@@ -210,10 +319,11 @@ pub fn gen_interface(
             let i = i as u32;
             if let Some(ref return_names) = return_names {
                 let return_writes = return_names.iter().zip(method.returns.as_ref().unwrap().iter()).map(|(ret_name, ret_def)| {
-                    if find_proxy(&ret_def.ty, gen_ctx).is_some() {
+                    if type_has_proxy(&ret_def.ty, gen_ctx) {
                         let wire_ty = gen_type(&ret_def.ty, gen_ctx);
+                        let conv = gen_pub_to_wire(&ret_def.ty, quote! { #ret_name }, gen_ctx);
                         quote! {
-                            let __w: #wire_ty = #ret_name.into();
+                            let __w: #wire_ty = #conv;
                             __w.write_owned(&mut gluon_out)?;
                         }
                     } else {
@@ -287,11 +397,12 @@ pub fn gen_interface(
     };
     let proxy = {
         let methods = def.methods.iter().enumerate().map(|(i, method)| {
-            // Params: proxy type taken directly; non-proxy uses impl Into<WireType> for ergonomics.
+            // Params: proxy/nested-proxy types taken directly; non-proxy uses impl Into<WireType>.
             let params = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                if let Some(proxy_ty) = find_proxy(&param.ty, gen_ctx) {
-                    quote! { #name: #proxy_ty }
+                if type_has_proxy(&param.ty, gen_ctx) {
+                    let pub_ty = gen_public_type(&param.ty, gen_ctx);
+                    quote! { #name: #pub_ty }
                 } else {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
                     quote! { #name: impl Into<#wire_ty> }
@@ -301,7 +412,12 @@ pub fn gen_interface(
             let params_convert = method.params.iter().map(|param| {
                 let wire_ty = gen_type(&param.ty, gen_ctx);
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! { let #name: #wire_ty = #name.into(); }
+                if type_has_proxy(&param.ty, gen_ctx) {
+                    let conv = gen_pub_to_wire(&param.ty, quote! { #name }, gen_ctx);
+                    quote! { let #name: #wire_ty = #conv; }
+                } else {
+                    quote! { let #name: #wire_ty = #name.into(); }
+                }
             }).collect::<Vec<_>>();
             let params_write = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
@@ -322,12 +438,13 @@ pub fn gen_interface(
                         [ty] => quote! {#ty},
                         types => quote! {(#(#types),*)},
                     };
-                    // Read each return from wire, converting to proxy type when needed.
+                    // Read each return from wire, converting to public type when needed.
                     let return_reads: Vec<proc_macro2::TokenStream> = ret_defs.iter().map(|ret_def| {
                         let base = quote! { gluon_wire::GluonConvertable::read(&mut reader)? };
-                        if find_proxy(&ret_def.ty, gen_ctx).is_some() {
+                        if type_has_proxy(&ret_def.ty, gen_ctx) {
                             let wire_ty = gen_type(&ret_def.ty, gen_ctx);
-                            quote! { { let __w: #wire_ty = #base; __w.into() } }
+                            let conv = gen_wire_to_pub(&ret_def.ty, quote! { __w }, gen_ctx);
+                            quote! { { let __w: #wire_ty = #base; #conv } }
                         } else {
                             base
                         }
@@ -524,23 +641,24 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
             .collect::<Vec<_>>();
         let writes = def.fields.iter().map(|f| {
             let fname = format_ident!("{}", f.name);
-            if find_proxy(&f.ty, gen_ctx).is_some() {
+            if type_has_proxy(&f.ty, gen_ctx) {
                 let wire_ty = gen_type(&f.ty, gen_ctx);
-                // write_owned avoids the 'b:'a lifetime constraint on a local value
-                quote! { { let __w: #wire_ty = self.#fname.clone().into(); __w.write_owned(gluon_data)?; } }
+                let conv = gen_pub_to_wire(&f.ty, quote! { self.#fname.clone() }, gen_ctx);
+                quote! { { let __w: #wire_ty = #conv; __w.write_owned(gluon_data)?; } }
             } else {
                 quote! { self.#fname.write(gluon_data)?; }
             }
         });
         let reads = def.fields.iter().map(|f| {
             let fname = format_ident!("{}", f.name);
-            if find_proxy(&f.ty, gen_ctx).is_some() {
+            if type_has_proxy(&f.ty, gen_ctx) {
                 let wire_ty = gen_type(&f.ty, gen_ctx);
                 let pub_ty = gen_public_type(&f.ty, gen_ctx);
+                let conv = gen_wire_to_pub(&f.ty, quote! { __w }, gen_ctx);
                 quote! {
                     let #fname: #pub_ty = {
                         let __w: #wire_ty = gluon_wire::GluonConvertable::read(gluon_data)?;
-                        __w.into()
+                        #conv
                     };
                 }
             } else {
@@ -549,9 +667,10 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         });
         let writes_owned = def.fields.iter().map(|f| {
             let fname = format_ident!("{}", f.name);
-            if find_proxy(&f.ty, gen_ctx).is_some() {
+            if type_has_proxy(&f.ty, gen_ctx) {
                 let wire_ty = gen_type(&f.ty, gen_ctx);
-                quote! { { let __w: #wire_ty = self.#fname.into(); __w.write_owned(gluon_data)?; } }
+                let conv = gen_pub_to_wire(&f.ty, quote! { self.#fname }, gen_ctx);
+                quote! { { let __w: #wire_ty = #conv; __w.write_owned(gluon_data)?; } }
             } else {
                 quote! { self.#fname.write_owned(gluon_data)?; }
             }
@@ -632,9 +751,10 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             } else {
                 let field_writes = variant.fields.iter().map(|f| {
                     let fname = format_ident!("{}", f.name.to_case(Case::Snake));
-                    if find_proxy(&f.ty, gen_ctx).is_some() {
+                    if type_has_proxy(&f.ty, gen_ctx) {
                         let wire_ty = gen_type(&f.ty, gen_ctx);
-                        quote! { { let __w: #wire_ty = #fname.clone().into(); __w.write_owned(gluon_data)?; } }
+                        let conv = gen_pub_to_wire(&f.ty, quote! { #fname.clone() }, gen_ctx);
+                        quote! { { let __w: #wire_ty = #conv; __w.write_owned(gluon_data)?; } }
                     } else {
                         quote! { #fname.write(gluon_data)?; }
                     }
@@ -658,9 +778,10 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             } else {
                 let field_writes_owned = variant.fields.iter().map(|f| {
                     let fname = format_ident!("{}", f.name.to_case(Case::Snake));
-                    if find_proxy(&f.ty, gen_ctx).is_some() {
+                    if type_has_proxy(&f.ty, gen_ctx) {
                         let wire_ty = gen_type(&f.ty, gen_ctx);
-                        quote! { { let __w: #wire_ty = #fname.into(); __w.write_owned(gluon_data)?; } }
+                        let conv = gen_pub_to_wire(&f.ty, quote! { #fname }, gen_ctx);
+                        quote! { { let __w: #wire_ty = #conv; __w.write_owned(gluon_data)?; } }
                     } else {
                         quote! { #fname.write_owned(gluon_data)?; }
                     }
@@ -684,13 +805,14 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             } else {
                 let field_reads = variant.fields.iter().map(|f| {
                     let fname = format_ident!("{}", f.name.to_case(Case::Snake));
-                    if find_proxy(&f.ty, gen_ctx).is_some() {
+                    if type_has_proxy(&f.ty, gen_ctx) {
                         let wire_ty = gen_type(&f.ty, gen_ctx);
                         let pub_ty = gen_public_type(&f.ty, gen_ctx);
+                        let conv = gen_wire_to_pub(&f.ty, quote! { __w }, gen_ctx);
                         quote! {
                             let #fname: #pub_ty = {
                                 let __w: #wire_ty = gluon_wire::GluonConvertable::read(gluon_data)?;
-                                __w.into()
+                                #conv
                             };
                         }
                     } else {

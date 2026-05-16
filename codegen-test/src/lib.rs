@@ -134,6 +134,15 @@ mod tests {
     }
 
     #[test]
+    fn option_proxy_field_type() {
+        // MaybeColor.color should be Option<MyColor>, not Option<wire Color>
+        let mc = protocol::test::MaybeColor { color: Some(MyColor::Green) };
+        assert_eq!(mc.color, Some(MyColor::Green));
+        let none = protocol::test::MaybeColor { color: None };
+        assert_eq!(none.color, None);
+    }
+
+    #[test]
     fn cross_protocol_vec3_round_trips() {
         use protocol::types::Vec3;
         let wire = Vec3 { x: 1.0, y: 2.0, z: 3.0 };

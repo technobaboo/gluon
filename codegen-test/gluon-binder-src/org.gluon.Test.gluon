@@ -44,3 +44,8 @@ struct Palette {
 	primary: Color,
 	secondary: Color,
 }
+
+/// Struct with an optional Color — exercises proxy inside Option
+struct MaybeColor {
+	color: Option<Color>,
+}

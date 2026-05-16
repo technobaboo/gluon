@@ -19,6 +19,10 @@ pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::Ext
             supported_derives: gluon_wire::Derives::from_bits_truncate(31u32),
         },
         gluon_wire::ExternalGluonType {
+            name: "MaybeColor",
+            supported_derives: gluon_wire::Derives::from_bits_truncate(31u32),
+        },
+        gluon_wire::ExternalGluonType {
             name: "TestEnum",
             supported_derives: gluon_wire::Derives::from_bits_truncate(0u32),
         },
@@ -127,6 +131,42 @@ impl gluon_wire::GluonConvertable for Palette {
         }
         {
             let __w: Color = self.secondary.into();
+            __w.write_owned(gluon_data)?;
+        }
+        Ok(())
+    }
+}
+///Struct with an optional Color — exercises proxy inside Option
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct MaybeColor {
+    pub color: Option<crate::MyColor>,
+}
+impl gluon_wire::GluonConvertable for MaybeColor {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        {
+            let __w: Option<Color> = self.color.clone().map(|__v| __v.into());
+            __w.write_owned(gluon_data)?;
+        }
+        Ok(())
+    }
+    fn read(
+        gluon_data: &mut gluon_wire::GluonDataReader,
+    ) -> Result<Self, gluon_wire::GluonReadError> {
+        let color: Option<crate::MyColor> = {
+            let __w: Option<Color> = gluon_wire::GluonConvertable::read(gluon_data)?;
+            __w.map(|__v| __v.into())
+        };
+        Ok(MaybeColor { color })
+    }
+    fn write_owned(
+        self,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'_>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        {
+            let __w: Option<Color> = self.color.map(|__v| __v.into());
             __w.write_owned(gluon_data)?;
         }
         Ok(())
