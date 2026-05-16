@@ -19,6 +19,15 @@ pub struct LocalProtocol {
     pub rust_module: String,
     pub protocol: Protocol,
 }
+/// Maps a protocol type name to an existing Rust type that should be used in the public API
+/// instead. The crate implementing the protocol must provide `From<WireType> for RustType` and
+/// `From<RustType> for WireType` impls. The generated wire types become `pub(crate)`.
+pub struct TypeProxy {
+    /// Name as written in the `.gluon` file (e.g. `"Vec3"`)
+    pub protocol_type_name: String,
+    /// The Rust type path to surface in the public API (e.g. `"glam::Vec3"`)
+    pub rust_type: String,
+}
 impl Deref for LocalProtocol {
     type Target = Protocol;
 
@@ -41,6 +50,8 @@ pub struct GenCtx<'a> {
     /// Which derives to attempt on generated structs/enums. A derive is only
     /// applied if every field/variant member supports it.
     pub requested_derives: Derives,
+    /// Protocol type names mapped to their public Rust proxy types.
+    pub type_proxies: &'a [TypeProxy],
 }
 
 pub fn gen_module(
@@ -48,12 +59,14 @@ pub fn gen_module(
     other_local_protocols: &[&LocalProtocol],
     external_protocols: &[&ExternalProtocol],
     requested_derives: Derives,
+    type_proxies: &[TypeProxy],
 ) -> proc_macro2::TokenStream {
     let gen_ctx = &GenCtx {
         curr_protocol: proto,
         other_local_protocols,
         external_protocols,
         requested_derives,
+        type_proxies,
     };
     let interfaces = proto
         .interfaces
@@ -69,7 +82,7 @@ pub fn gen_module(
         .map(|(_name, def)| gen_enum(def, gen_ctx));
     let external_proto_const = gen_external_protocol_const(gen_ctx);
     quote! {
-        #![allow(unused, clippy::single_match, clippy::match_single_binding, clippy::large_enum_variant)]
+        #![allow(unused, clippy::single_match, clippy::match_single_binding, clippy::large_enum_variant, private_bounds, private_interfaces)]
         use gluon_wire::GluonConvertable;
         #external_proto_const
         #(#structs)*
@@ -107,6 +120,24 @@ pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         };
     }
 }
+/// Returns the proxy rust type for a protocol type if one is registered, else `None`.
+fn find_proxy(ty: &Type, gen_ctx: &GenCtx) -> Option<proc_macro2::TokenStream> {
+    if let Type::Custom(CustomType::Named(name)) = ty {
+        gen_ctx
+            .type_proxies
+            .iter()
+            .find(|p| &p.protocol_type_name == name)
+            .map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
+    } else {
+        None
+    }
+}
+
+/// Like `gen_type` but substitutes the proxy rust type when one is registered.
+fn gen_public_type(ty: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    find_proxy(ty, gen_ctx).unwrap_or_else(|| gen_type(ty, gen_ctx))
+}
+
 pub fn gen_interface(
     interface_name: &str,
     def: &Interface,
@@ -115,12 +146,24 @@ pub fn gen_interface(
     let name = format_ident!("{}", interface_name.to_case(Case::Pascal));
     let handler_name = format_ident!("{name}Handler");
     let handler = {
+        // Dispatch arms: read wire types from the binder, convert to proxy types for the handler
+        // call, then convert return values back to wire types for the response.
         let methods_dispatch = def.methods.iter().enumerate().map(|(i, method)| {
             let i = i + 8;
-            let names = method.params.iter().map(|v|{ format_ident!("param_{}", v.name) }).collect::<Vec<_>>();
-            let params = names
-                .iter()
-                .map(|v| quote! {let #v = gluon_wire::GluonConvertable::read(&mut gluon_data)?;});
+            let names = method.params.iter().map(|v| format_ident!("param_{}", v.name)).collect::<Vec<_>>();
+            let params = names.iter().zip(method.params.iter()).map(|(var, param)| {
+                if let Some(proxy_ty) = find_proxy(&param.ty, gen_ctx) {
+                    let wire_ty = gen_type(&param.ty, gen_ctx);
+                    quote! {
+                        let #var: #proxy_ty = {
+                            let __w: #wire_ty = gluon_wire::GluonConvertable::read(&mut gluon_data)?;
+                            __w.into()
+                        };
+                    }
+                } else {
+                    quote! { let #var = gluon_wire::GluonConvertable::read(&mut gluon_data)?; }
+                }
+            });
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let return_names = method.returns.as_ref().map(|v| {
                 v.iter()
@@ -128,7 +171,18 @@ pub fn gen_interface(
                     .collect::<Vec<_>>()
             });
             let i = i as u32;
-            if let Some(return_names) = return_names {
+            if let Some(ref return_names) = return_names {
+                let return_writes = return_names.iter().zip(method.returns.as_ref().unwrap().iter()).map(|(ret_name, ret_def)| {
+                    if find_proxy(&ret_def.ty, gen_ctx).is_some() {
+                        let wire_ty = gen_type(&ret_def.ty, gen_ctx);
+                        quote! {
+                            let __w: #wire_ty = #ret_name.into();
+                            __w.write_owned(&mut gluon_out)?;
+                        }
+                    } else {
+                        quote! { #ret_name.write_owned(&mut gluon_out)?; }
+                    }
+                }).collect::<Vec<_>>();
                 quote! {
                     #i => {
                         let return_callback = gluon_data.read_binder()?;
@@ -136,9 +190,7 @@ pub fn gen_interface(
                         #(#params)*
                         let (#(#return_names),*) = self.#name(ctx, #(#names),*).await;
                         drop(gluon_data);
-                        #(
-                            #return_names.write_owned(&mut gluon_out)?;
-                        )*
+                        #(#return_writes)*
                         return_callback.device().transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
                     },
                 }
@@ -149,41 +201,30 @@ pub fn gen_interface(
                         drop(gluon_data);
                         self.#name(ctx, #(#names),*).await;
                     },
-
                 }
             }
         });
+        // Handler trait: public-facing signatures use proxy types where registered.
         let methods = def.methods.iter().map(|method| {
             let params = method.params.iter().map(|param| {
-                let type_def = gen_type(&param.ty, gen_ctx);
+                let type_def = gen_public_type(&param.ty, gen_ctx);
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! {
-                    #name: #type_def
-                }
+                quote! { #name: #type_def }
             });
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
-            // TODO: gen return docs and names into main fn docs?
             let return_types = method.returns.as_ref().map(|v| {
-                v.iter()
-                    .map(|v| gen_type(&v.ty, gen_ctx))
-                    .collect::<Vec<_>>()
+                v.iter().map(|v| gen_public_type(&v.ty, gen_ctx)).collect::<Vec<_>>()
             });
             let fn_return = match return_types.as_deref() {
-                None => {
-                    quote! {
-                        -> impl Future<Output=()> + Send + Sync
-                    }
-                }
+                None => quote! { -> impl Future<Output=()> + Send + Sync },
                 Some(types) => {
                     let types = match types {
                         [] => quote! {()},
                         [ty] => quote! {#ty},
                         types => quote! {(#(#types),*)},
                     };
-                    quote! {
-                        -> impl Future<Output=#types> + Send + Sync
-                    }
+                    quote! { -> impl Future<Output=#types> + Send + Sync }
                 }
             };
             quote! {
@@ -209,45 +250,55 @@ pub fn gen_interface(
     };
     let proxy = {
         let methods = def.methods.iter().enumerate().map(|(i, method)| {
+            // Params: proxy type taken directly; non-proxy uses impl Into<WireType> for ergonomics.
             let params = method.params.iter().map(|param| {
-                let type_def = gen_type(&param.ty, gen_ctx);
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! {
-                    #name: impl Into<#type_def>
+                if let Some(proxy_ty) = find_proxy(&param.ty, gen_ctx) {
+                    quote! { #name: #proxy_ty }
+                } else {
+                    let wire_ty = gen_type(&param.ty, gen_ctx);
+                    quote! { #name: impl Into<#wire_ty> }
                 }
             }).collect::<Vec<_>>();
+            // Convert every param to its wire type before writing.
             let params_convert = method.params.iter().map(|param| {
-                let type_def = gen_type(&param.ty, gen_ctx);
+                let wire_ty = gen_type(&param.ty, gen_ctx);
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! { let #name: #type_def = #name.into(); }
+                quote! { let #name: #wire_ty = #name.into(); }
             }).collect::<Vec<_>>();
             let params_write = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! {#name.write(&mut gluon_builder)?;}
+                quote! { #name.write(&mut gluon_builder)?; }
             }).collect::<Vec<_>>();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
-            let return_types = method
-                .returns
-                .as_ref()
-                .map(|v| v.iter().map(|v| gen_type(&v.ty,gen_ctx)).collect::<Vec<_>>());
+            // Return types: public (proxy) types in the signature.
+            let pub_return_types = method.returns.as_ref().map(|v| {
+                v.iter().map(|v| gen_public_type(&v.ty, gen_ctx)).collect::<Vec<_>>()
+            });
             let i = i as u32 + 8;
-            match return_types {
-                Some(types) => {
-                    let fn_return = match types.as_slice() {
+            match pub_return_types {
+                Some(ref pub_types) => {
+                    let ret_defs = method.returns.as_ref().unwrap();
+                    let fn_return = match pub_types.as_slice() {
                         [] => quote! {()},
                         [ty] => quote! {#ty},
                         types => quote! {(#(#types),*)},
                     };
-                    let return_tuple = match types.as_slice() {
-                        [] => quote! {()},
-                        [_] => quote! {gluon_wire::GluonConvertable::read(&mut reader)?},
-                        types => {
-                            let types = types
-                                .iter()
-                                .map(|_| quote! {gluon_wire::GluonConvertable::read(&mut reader)?});
-                            quote! {(#(#types),*)}
+                    // Read each return from wire, converting to proxy type when needed.
+                    let return_reads: Vec<proc_macro2::TokenStream> = ret_defs.iter().map(|ret_def| {
+                        let base = quote! { gluon_wire::GluonConvertable::read(&mut reader)? };
+                        if find_proxy(&ret_def.ty, gen_ctx).is_some() {
+                            let wire_ty = gen_type(&ret_def.ty, gen_ctx);
+                            quote! { { let __w: #wire_ty = #base; __w.into() } }
+                        } else {
+                            base
                         }
+                    }).collect();
+                    let return_tuple = match return_reads.as_slice() {
+                        [] => quote! {()},
+                        [single] => single.clone(),
+                        reads => quote! {(#(#reads),*)},
                     };
                     quote! {
                         #doc_comment
@@ -259,8 +310,7 @@ pub fn gen_interface(
                             gluon_builder.write_binder(&gluon_ret)?;
                             #(#params_write)*
                             self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
-                            // this is safe since we're also holding the
-                            // channel sender
+                            // safe since we're also holding the channel sender
                             let transaction = gluon_recv.recv().await.unwrap();
                             let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
                             Ok(#return_tuple)
@@ -415,10 +465,19 @@ fn named_type_contains_inline(
 }
 
 pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+    let is_proxied = gen_ctx
+        .type_proxies
+        .iter()
+        .any(|p| p.protocol_type_name == def.name);
+    let vis = if is_proxied {
+        quote! { pub(crate) }
+    } else {
+        quote! { pub }
+    };
     let fields = def
         .fields
         .iter()
-        .map(|f| gen_field_struct(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx)));
+        .map(|f| gen_field_struct(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx), is_proxied));
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(struct_supported_derives(def, gen_ctx));
     let name = format_ident!("{}", name);
@@ -454,7 +513,7 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
     quote! {
         #[doc = #doc]
         #[derive(Debug, #(#derives),*)]
-        pub struct #name {
+        #vis struct #name {
             #(#fields)*
         }
 
@@ -483,6 +542,15 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             }
         }
     });
+    let is_proxied = gen_ctx
+        .type_proxies
+        .iter()
+        .any(|p| p.protocol_type_name == def.name);
+    let vis = if is_proxied {
+        quote! { pub(crate) }
+    } else {
+        quote! { pub }
+    };
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(enum_supported_derives(def, gen_ctx));
     let enum_name = format_ident!("{}", name);
@@ -588,7 +656,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     quote! {
         #[doc = #doc]
         #[derive(Debug, #(#derives),*)]
-        pub enum #enum_name {
+        #vis enum #enum_name {
             #(#variants),*
         }
 
@@ -610,18 +678,23 @@ pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2
         #name: #type_def,
     }
 }
-pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2::TokenStream {
+pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx, boxed: bool, parent_is_proxied: bool) -> proc_macro2::TokenStream {
     let type_def = gen_type(&def.ty, gen_ctx);
     let type_def = if boxed {
         quote! { Box<#type_def> }
     } else {
         type_def
     };
+    let vis = if parent_is_proxied {
+        quote! { pub(crate) }
+    } else {
+        quote! { pub }
+    };
     let name = format_ident!("{}", def.name.to_case(Case::Snake));
     let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
     quote! {
         #doc_comment
-        pub #name: #type_def,
+        #vis #name: #type_def,
     }
 }
 
@@ -930,6 +1003,7 @@ mod tests {
             other_local_protocols: &[],
             external_protocols: &[],
             requested_derives: derives,
+            type_proxies: &[],
         };
         let def = &local.protocol.structs.iter().find(|(n, _)| n == "Node").unwrap().1;
         let tokens = gen_struct(def, &gen_ctx).to_string();
@@ -962,6 +1036,7 @@ mod tests {
             other_local_protocols: &[],
             external_protocols: &[],
             requested_derives: derives,
+            type_proxies: &[],
         };
         let def = &local.protocol.enums.iter().find(|(n, _)| n == "Tree").unwrap().1;
         let tokens = gen_enum(def, &gen_ctx).to_string();
@@ -999,6 +1074,7 @@ mod tests {
             other_local_protocols: &[],
             external_protocols: &[],
             requested_derives: derives,
+            type_proxies: &[],
         };
 
         let expr_def = &local.protocol.enums.iter().find(|(n, _)| n == "Expr").unwrap().1;
@@ -1038,6 +1114,7 @@ mod tests {
             other_local_protocols: &[],
             external_protocols: &[],
             requested_derives: derives,
+            type_proxies: &[],
         };
         let def = &local.protocol.structs.iter().find(|(n, _)| n == "TreeNode").unwrap().1;
         let tokens = gen_struct(def, &gen_ctx).to_string();
@@ -1067,6 +1144,7 @@ mod tests {
             other_local_protocols: &[],
             external_protocols: &[],
             requested_derives: derives,
+            type_proxies: &[],
         };
         let def = &local.protocol.structs.iter().find(|(n, _)| n == "Point").unwrap().1;
         let tokens = gen_struct(def, &gen_ctx).to_string();

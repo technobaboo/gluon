@@ -1,4 +1,5 @@
 use gluon_codegen_rust::helpers::gen_multiple_modules;
+use gluon_codegen_rust::TypeProxy;
 use gluon_wire::Derives;
 use std::path::Path;
 
@@ -14,6 +15,10 @@ fn main() {
         ],
         &[],
         Derives::all(),
+        &[TypeProxy {
+            protocol_type_name: "TestEnum".into(),
+            rust_type: "crate::MyTestEnum".into(),
+        }],
         "./src/protocol",
     );
 }

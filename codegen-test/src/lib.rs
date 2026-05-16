@@ -9,6 +9,20 @@ use std::{
 
 mod protocol;
 
+/// Proxy type for the wire `TestEnum` — demonstrates the TypeProxy system.
+pub struct MyTestEnum(protocol::test::TestEnum);
+
+impl From<protocol::test::TestEnum> for MyTestEnum {
+    fn from(v: protocol::test::TestEnum) -> Self {
+        MyTestEnum(v)
+    }
+}
+impl From<MyTestEnum> for protocol::test::TestEnum {
+    fn from(v: MyTestEnum) -> Self {
+        v.0
+    }
+}
+
 #[allow(unused)]
 #[derive(Debug, gluon_wire::Handler)]
 struct TestHandlerImpl {}
@@ -30,12 +44,7 @@ impl TestHandler for TestHandlerImpl {
         c"nya~".to_owned().hash(&mut hasher);
     }
 
-    async fn echo(
-        &self,
-        _ctx: GluonCtx,
-        input: protocol::test::TestEnum,
-    ) -> protocol::test::TestEnum {
-        println!("echoing: {input:?}");
+    async fn echo(&self, _ctx: GluonCtx, input: MyTestEnum) -> MyTestEnum {
         input
     }
 

@@ -2,7 +2,9 @@
     unused,
     clippy::single_match,
     clippy::match_single_binding,
-    clippy::large_enum_variant
+    clippy::large_enum_variant,
+    private_bounds,
+    private_interfaces
 )]
 use gluon_wire::GluonConvertable;
 pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::ExternalGluonProtocol {
@@ -64,7 +66,7 @@ impl gluon_wire::GluonConvertable for TestStruct {
 }
 ///Test enum
 #[derive(Debug)]
-pub enum TestEnum {
+pub(crate) enum TestEnum {
     TestStruct { test_struct: TestStruct },
     Fd { fd: std::os::fd::OwnedFd },
     EmptyVariant,
@@ -171,8 +173,8 @@ impl Test {
     }
     pub async fn echo(
         &self,
-        input: impl Into<TestEnum>,
-    ) -> Result<TestEnum, gluon_wire::GluonSendError> {
+        input: crate::MyTestEnum,
+    ) -> Result<crate::MyTestEnum, gluon_wire::GluonSendError> {
         let input: TestEnum = input.into();
         let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
@@ -184,7 +186,10 @@ impl Test {
             .transact_one_way(&self.obj, 10u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
-        Ok(gluon_wire::GluonConvertable::read(&mut reader)?)
+        Ok({
+            let __w: TestEnum = gluon_wire::GluonConvertable::read(&mut reader)?;
+            __w.into()
+        })
     }
     pub async fn echo_ref(
         &self,
@@ -255,8 +260,8 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
     fn echo(
         &self,
         _ctx: gluon_wire::GluonCtx,
-        input: TestEnum,
-    ) -> impl Future<Output = TestEnum> + Send + Sync;
+        input: crate::MyTestEnum,
+    ) -> impl Future<Output = crate::MyTestEnum> + Send + Sync;
     fn echo_ref(
         &self,
         _ctx: gluon_wire::GluonCtx,
@@ -290,12 +295,16 @@ pub trait TestHandler: binderbinder::device::TransactionHandler + Send + Sync + 
                 10u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon_wire::GluonDataBuilder::new();
-                    let param_input = gluon_wire::GluonConvertable::read(
-                        &mut gluon_data,
-                    )?;
+                    let param_input: crate::MyTestEnum = {
+                        let __w: TestEnum = gluon_wire::GluonConvertable::read(
+                            &mut gluon_data,
+                        )?;
+                        __w.into()
+                    };
                     let (output) = self.echo(ctx, param_input).await;
                     drop(gluon_data);
-                    output.write_owned(&mut gluon_out)?;
+                    let __w: TestEnum = output.into();
+                    __w.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
                         .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
