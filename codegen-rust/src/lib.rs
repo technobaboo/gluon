@@ -25,10 +25,13 @@ pub struct LocalProtocol {
 /// instead. The crate implementing the protocol must provide `From<WireType> for RustType` and
 /// `From<RustType> for WireType` impls. The generated wire types become `pub(crate)`.
 pub struct TypeProxy {
-    /// Name as written in the `.gluon` file (e.g. `"Vec3"`)
+    /// `"module::TypeName"` — module is the short name passed to `gen_multiple_modules`
     pub protocol_type_name: String,
     /// The Rust type path to surface in the public API (e.g. `"glam::Vec3"`)
     pub rust_type: String,
+    /// Derives that the proxy type implements, so the codegen can propagate them correctly
+    /// to structs/enums that contain this type as a field.
+    pub derives: Derives,
 }
 impl Deref for LocalProtocol {
     type Target = Protocol;
@@ -122,23 +125,26 @@ pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         };
     }
 }
-/// Returns the proxy rust type for a protocol type if one is registered, else `None`.
-///
-/// `protocol_type_name` in `TypeProxy` must be of the form `"module::TypeName"` where `module`
-/// matches [`LocalProtocol::module_name`] of the protocol currently being generated.
+fn proxy_matches(p: &TypeProxy, type_name: &str, gen_ctx: &GenCtx) -> bool {
+    match p.protocol_type_name.split_once("::") {
+        Some((prefix, name)) => prefix == gen_ctx.curr_protocol.module_name && name == type_name,
+        None => panic!(
+            "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
+            p.protocol_type_name
+        ),
+    }
+}
+
+/// Finds the registered proxy for a bare type name within the current protocol.
+fn find_proxy_by_name<'a>(type_name: &str, gen_ctx: &'a GenCtx) -> Option<&'a TypeProxy> {
+    gen_ctx.type_proxies.iter().find(|p| proxy_matches(p, type_name, gen_ctx))
+}
+
+/// Finds the registered proxy for a `Type`, returning its parsed `TokenStream`.
 fn find_proxy(ty: &Type, gen_ctx: &GenCtx) -> Option<proc_macro2::TokenStream> {
     if let Type::Custom(CustomType::Named(type_name)) = ty {
-        gen_ctx.type_proxies.iter().find(|p| {
-            match p.protocol_type_name.split_once("::") {
-                Some((prefix, name)) => {
-                    prefix == gen_ctx.curr_protocol.module_name && name == type_name
-                }
-                None => panic!(
-                    "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
-                    p.protocol_type_name
-                ),
-            }
-        }).map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
+        find_proxy_by_name(type_name, gen_ctx)
+            .map(|p| p.rust_type.parse().expect("TypeProxy::rust_type is not a valid token stream"))
     } else {
         None
     }
@@ -476,10 +482,7 @@ fn named_type_contains_inline(
 }
 
 pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
-    let is_proxied = gen_ctx
-        .type_proxies
-        .iter()
-        .any(|p| p.protocol_type_name == def.name);
+    let is_proxied = find_proxy_by_name(&def.name, gen_ctx).is_some();
     let vis = if is_proxied {
         quote! { pub(crate) }
     } else {
@@ -499,23 +502,57 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
             .iter()
             .map(|v| format_ident!("{}", v.name))
             .collect::<Vec<_>>();
+        let writes = def.fields.iter().map(|f| {
+            let fname = format_ident!("{}", f.name);
+            if find_proxy(&f.ty, gen_ctx).is_some() {
+                let wire_ty = gen_type(&f.ty, gen_ctx);
+                // write_owned avoids the 'b:'a lifetime constraint on a local value
+                quote! { { let __w: #wire_ty = self.#fname.clone().into(); __w.write_owned(gluon_data)?; } }
+            } else {
+                quote! { self.#fname.write(gluon_data)?; }
+            }
+        });
+        let reads = def.fields.iter().map(|f| {
+            let fname = format_ident!("{}", f.name);
+            if find_proxy(&f.ty, gen_ctx).is_some() {
+                let wire_ty = gen_type(&f.ty, gen_ctx);
+                let pub_ty = gen_public_type(&f.ty, gen_ctx);
+                quote! {
+                    let #fname: #pub_ty = {
+                        let __w: #wire_ty = gluon_wire::GluonConvertable::read(gluon_data)?;
+                        __w.into()
+                    };
+                }
+            } else {
+                quote! { let #fname = gluon_wire::GluonConvertable::read(gluon_data)?; }
+            }
+        });
+        let writes_owned = def.fields.iter().map(|f| {
+            let fname = format_ident!("{}", f.name);
+            if find_proxy(&f.ty, gen_ctx).is_some() {
+                let wire_ty = gen_type(&f.ty, gen_ctx);
+                quote! { { let __w: #wire_ty = self.#fname.into(); __w.write_owned(gluon_data)?; } }
+            } else {
+                quote! { self.#fname.write_owned(gluon_data)?; }
+            }
+        });
         quote! {
             impl gluon_wire::GluonConvertable for #name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
                     gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
                 ) -> Result<(), gluon_wire::GluonWriteError> {
-                    #(self.#field_names.write(gluon_data)?;)*
+                    #(#writes)*
                     Ok(())
                 }
 
                 fn read(gluon_data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
-                    #(let #field_names = gluon_wire::GluonConvertable::read(gluon_data)?;)*
+                    #(#reads)*
                     Ok(#name {#(#field_names,)*})
                 }
 
                 fn write_owned(self, gluon_data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
-                    #(self.#field_names.write_owned(gluon_data)?;)*
+                    #(#writes_owned)*
                     Ok(())
                 }
             }
@@ -553,10 +590,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             }
         }
     });
-    let is_proxied = gen_ctx
-        .type_proxies
-        .iter()
-        .any(|p| p.protocol_type_name == def.name);
+    let is_proxied = find_proxy_by_name(&def.name, gen_ctx).is_some();
     let vis = if is_proxied {
         quote! { pub(crate) }
     } else {
@@ -568,69 +602,84 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     let doc = &def.doc;
     let gluon_trait_impl = {
         let write_variants = def.variants.iter().enumerate().map(|(i, variant)| {
-            let field_names = variant
-                .fields
-                .iter()
+            let field_names = variant.fields.iter()
                 .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
             let i = i as u16;
             if field_names.is_empty() {
-                quote! {
-                    #enum_name::#name => {
-                        gluon_data.write_u16(#i)?;
-                    },
-                }
+                quote! { #enum_name::#name => { gluon_data.write_u16(#i)?; }, }
             } else {
+                let field_writes = variant.fields.iter().map(|f| {
+                    let fname = format_ident!("{}", f.name.to_case(Case::Snake));
+                    if find_proxy(&f.ty, gen_ctx).is_some() {
+                        let wire_ty = gen_type(&f.ty, gen_ctx);
+                        quote! { { let __w: #wire_ty = #fname.clone().into(); __w.write_owned(gluon_data)?; } }
+                    } else {
+                        quote! { #fname.write(gluon_data)?; }
+                    }
+                });
                 quote! {
                     #enum_name::#name { #(#field_names),* } => {
                         gluon_data.write_u16(#i)?;
-                        #(#field_names.write(gluon_data)?;)*
+                        #(#field_writes)*
                     },
                 }
             }
         });
         let write_owned_variants = def.variants.iter().enumerate().map(|(i, variant)| {
-            let field_names = variant
-                .fields
-                .iter()
+            let field_names = variant.fields.iter()
                 .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
             let i = i as u16;
             if field_names.is_empty() {
-                quote! {
-                    #enum_name::#name => {
-                        gluon_data.write_u16(#i)?;
-                    },
-                }
+                quote! { #enum_name::#name => { gluon_data.write_u16(#i)?; }, }
             } else {
+                let field_writes_owned = variant.fields.iter().map(|f| {
+                    let fname = format_ident!("{}", f.name.to_case(Case::Snake));
+                    if find_proxy(&f.ty, gen_ctx).is_some() {
+                        let wire_ty = gen_type(&f.ty, gen_ctx);
+                        quote! { { let __w: #wire_ty = #fname.into(); __w.write_owned(gluon_data)?; } }
+                    } else {
+                        quote! { #fname.write_owned(gluon_data)?; }
+                    }
+                });
                 quote! {
                     #enum_name::#name { #(#field_names),* } => {
                         gluon_data.write_u16(#i)?;
-                        #(#field_names.write_owned(gluon_data)?;)*
+                        #(#field_writes_owned)*
                     },
                 }
             }
         });
         let read_variants = def.variants.iter().enumerate().map(|(i, variant)| {
-            let field_names = variant
-                .fields
-                .iter()
+            let field_names = variant.fields.iter()
                 .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
                 .collect::<Vec<_>>();
             let name = format_ident!("{}", variant.name.to_case(Case::Pascal));
             let i = i as u16;
             if variant.fields.is_empty() {
-                quote! {
-                    #i => {
-                        #enum_name::#name
-                    },
-                }
+                quote! { #i => { #enum_name::#name }, }
             } else {
+                let field_reads = variant.fields.iter().map(|f| {
+                    let fname = format_ident!("{}", f.name.to_case(Case::Snake));
+                    if find_proxy(&f.ty, gen_ctx).is_some() {
+                        let wire_ty = gen_type(&f.ty, gen_ctx);
+                        let pub_ty = gen_public_type(&f.ty, gen_ctx);
+                        quote! {
+                            let #fname: #pub_ty = {
+                                let __w: #wire_ty = gluon_wire::GluonConvertable::read(gluon_data)?;
+                                __w.into()
+                            };
+                        }
+                    } else {
+                        quote! { let #fname = gluon_wire::GluonConvertable::read(gluon_data)?; }
+                    }
+                });
                 quote! {
                     #i => {
-                        #(let #field_names = gluon_wire::GluonConvertable::read(gluon_data)?;)*
+                        #(#field_reads)*
                         #enum_name::#name { #(#field_names,)* }
                     },
                 }
@@ -676,7 +725,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
 }
 
 pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2::TokenStream {
-    let type_def = gen_type(&def.ty, gen_ctx);
+    let type_def = gen_public_type(&def.ty, gen_ctx);
     let type_def = if boxed {
         quote! { Box<#type_def> }
     } else {
@@ -690,7 +739,7 @@ pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2
     }
 }
 pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx, boxed: bool, parent_is_proxied: bool) -> proc_macro2::TokenStream {
-    let type_def = gen_type(&def.ty, gen_ctx);
+    let type_def = gen_public_type(&def.ty, gen_ctx);
     let type_def = if boxed {
         quote! { Box<#type_def> }
     } else {
@@ -802,11 +851,14 @@ fn struct_supported_derives(def: &StructDef, gen_ctx: &GenCtx) -> Derives {
 
 fn enum_supported_derives(def: &EnumDef, gen_ctx: &GenCtx) -> Derives {
     let mut visiting = HashSet::new();
+    // Enums can't use #[derive(Default)] without a #[default] attribute on a variant,
+    // which we don't generate, so always exclude it.
+    let requested = gen_ctx.requested_derives - Derives::DEFAULT;
     def.variants
         .iter()
         .flat_map(|v| v.fields.iter())
         .map(|f| supported_derives_inner(&f.ty, gen_ctx, &mut visiting))
-        .fold(gen_ctx.requested_derives, |acc, d| acc & d)
+        .fold(requested, |acc, d| acc & d)
 }
 
 /// Returns which of the requested derives this type can support.
@@ -862,7 +914,12 @@ fn custom_type_derives_inner(
     visiting: &mut HashSet<String>,
 ) -> Derives {
     match custom {
-        CustomType::Named(name) => derives_from_protocol_inner(name, gen_ctx, visiting),
+        CustomType::Named(name) => {
+            if let Some(proxy) = find_proxy_by_name(name, gen_ctx) {
+                return gen_ctx.requested_derives & proxy.derives;
+            }
+            derives_from_protocol_inner(name, gen_ctx, visiting)
+        }
         CustomType::Qualified(namespace, type_name) => {
             let import = gen_ctx
                 .curr_protocol

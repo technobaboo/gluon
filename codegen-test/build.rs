@@ -1,6 +1,5 @@
 use gluon_codegen_rust::helpers::gen_multiple_modules;
-use gluon_codegen_rust::TypeProxy;
-use gluon_wire::Derives;
+use gluon_codegen_rust::{Derives, TypeProxy};
 use std::path::Path;
 
 fn main() {
@@ -15,10 +14,18 @@ fn main() {
         ],
         &[],
         Derives::all(),
-        &[TypeProxy {
-            protocol_type_name: "test::TestEnum".into(),
-            rust_type: "crate::MyTestEnum".into(),
-        }],
+        &[
+            TypeProxy {
+                protocol_type_name: "test::TestEnum".into(),
+                rust_type: "crate::MyTestEnum".into(),
+                derives: Derives::empty(),
+            },
+            TypeProxy {
+                protocol_type_name: "test::Color".into(),
+                rust_type: "crate::MyColor".into(),
+                derives: Derives::COPY | Derives::CLONE | Derives::HASH | Derives::PARTIAL_EQ | Derives::EQ,
+            },
+        ],
         "./src/protocol",
     );
 }

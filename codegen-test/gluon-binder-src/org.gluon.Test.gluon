@@ -31,3 +31,16 @@ enum TestEnum {
 	},
 	EmptyVariant
 }
+
+/// Simple unit-variant enum used to test proxy propagation into struct fields
+enum Color {
+	Red,
+	Green,
+	Blue,
+}
+
+/// Struct whose fields use Color — exercises the proxy-in-struct-field path
+struct Palette {
+	primary: Color,
+	secondary: Color,
+}

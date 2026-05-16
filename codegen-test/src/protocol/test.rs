@@ -15,8 +15,16 @@ pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::Ext
             supported_derives: gluon_wire::Derives::from_bits_truncate(2u32),
         },
         gluon_wire::ExternalGluonType {
+            name: "Palette",
+            supported_derives: gluon_wire::Derives::from_bits_truncate(31u32),
+        },
+        gluon_wire::ExternalGluonType {
             name: "TestEnum",
             supported_derives: gluon_wire::Derives::from_bits_truncate(0u32),
+        },
+        gluon_wire::ExternalGluonType {
+            name: "Color",
+            supported_derives: gluon_wire::Derives::from_bits_truncate(127u32),
         },
     ],
 };
@@ -64,9 +72,58 @@ impl gluon_wire::GluonConvertable for TestStruct {
         Ok(())
     }
 }
+///Struct whose fields use Color — exercises the proxy-in-struct-field path
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct Palette {
+    pub primary: crate::MyColor,
+    pub secondary: crate::MyColor,
+}
+impl gluon_wire::GluonConvertable for Palette {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        {
+            let __w: Color = self.primary.clone().into();
+            __w.write_owned(gluon_data)?;
+        }
+        {
+            let __w: Color = self.secondary.clone().into();
+            __w.write_owned(gluon_data)?;
+        }
+        Ok(())
+    }
+    fn read(
+        gluon_data: &mut gluon_wire::GluonDataReader,
+    ) -> Result<Self, gluon_wire::GluonReadError> {
+        let primary: crate::MyColor = {
+            let __w: Color = gluon_wire::GluonConvertable::read(gluon_data)?;
+            __w.into()
+        };
+        let secondary: crate::MyColor = {
+            let __w: Color = gluon_wire::GluonConvertable::read(gluon_data)?;
+            __w.into()
+        };
+        Ok(Palette { primary, secondary })
+    }
+    fn write_owned(
+        self,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'_>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        {
+            let __w: Color = self.primary.into();
+            __w.write_owned(gluon_data)?;
+        }
+        {
+            let __w: Color = self.secondary.into();
+            __w.write_owned(gluon_data)?;
+        }
+        Ok(())
+    }
+}
 ///Test enum
 #[derive(Debug)]
-pub enum TestEnum {
+pub(crate) enum TestEnum {
     TestStruct { test_struct: TestStruct },
     Fd { fd: std::os::fd::OwnedFd },
     EmptyVariant,
@@ -125,6 +182,61 @@ impl gluon_wire::GluonConvertable for TestEnum {
                 fd.write_owned(gluon_data)?;
             }
             TestEnum::EmptyVariant => {
+                gluon_data.write_u16(2u16)?;
+            }
+        };
+        Ok(())
+    }
+}
+///Simple unit-variant enum used to test proxy propagation into struct fields
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Color {
+    Red,
+    Green,
+    Blue,
+}
+impl gluon_wire::GluonConvertable for Color {
+    fn write<'a, 'b: 'a>(
+        &'b self,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        match self {
+            Color::Red => {
+                gluon_data.write_u16(0u16)?;
+            }
+            Color::Green => {
+                gluon_data.write_u16(1u16)?;
+            }
+            Color::Blue => {
+                gluon_data.write_u16(2u16)?;
+            }
+        };
+        Ok(())
+    }
+    fn read(
+        gluon_data: &mut gluon_wire::GluonDataReader,
+    ) -> Result<Self, gluon_wire::GluonReadError> {
+        Ok(
+            match gluon_data.read_u16()? {
+                0u16 => Color::Red,
+                1u16 => Color::Green,
+                2u16 => Color::Blue,
+                v => return Err(gluon_wire::GluonReadError::UnknownEnumVariant(v)),
+            },
+        )
+    }
+    fn write_owned(
+        self,
+        gluon_data: &mut gluon_wire::GluonDataBuilder<'_>,
+    ) -> Result<(), gluon_wire::GluonWriteError> {
+        match self {
+            Color::Red => {
+                gluon_data.write_u16(0u16)?;
+            }
+            Color::Green => {
+                gluon_data.write_u16(1u16)?;
+            }
+            Color::Blue => {
                 gluon_data.write_u16(2u16)?;
             }
         };
