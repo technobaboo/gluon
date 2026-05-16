@@ -9,13 +9,8 @@ edition = "2024"
 
 [workspace.dependencies]
 # binderbinder = { path = "../binderbinder" }
-binderbinder.git = "https://github.com/technobaboo/binderbinder"
-gluon-codegen-rust.path = "./codegen-rust"
-gluon-parser.path = "./parser"
-gluon-wire.path = "./wire"
-gluon-wire-derive.path = "./wire-derive"
-
-[package]
-name = "gluon"
-version.workspace = true
-edition.workspace = true
+binderbinder = { git = "https://github.com/technobaboo/binderbinder" }
+gluon-codegen = { path = "./codegen-rust" }
+gluon-parser = { path = "./parser" }
+gluon = { path = "./wire" }
+gluon-derive = { path = "./wire-derive" }

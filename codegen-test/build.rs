@@ -1,9 +1,9 @@
-use gluon_codegen_rust::helpers::gen_multiple_modules;
-use gluon_codegen_rust::{Derives, TypeProxy};
+use gluon_codegen::helpers::gen_multiple_modules;
+use gluon_codegen::{Derives, TypeProxy};
 use std::path::Path;
 
 fn main() {
-    println!("cargo:rerun-if-changed=../gluon-codegen-rust/src/lib.rs");
+    println!("cargo:rerun-if-changed=../codegen-rust/src/lib.rs");
     gen_multiple_modules(
         &[
             (
@@ -23,7 +23,11 @@ fn main() {
             TypeProxy {
                 protocol_type_name: "test::Color".into(),
                 rust_type: "crate::MyColor".into(),
-                derives: Derives::COPY | Derives::CLONE | Derives::HASH | Derives::PARTIAL_EQ | Derives::EQ,
+                derives: Derives::COPY
+                    | Derives::CLONE
+                    | Derives::HASH
+                    | Derives::PARTIAL_EQ
+                    | Derives::EQ,
             },
             TypeProxy {
                 protocol_type_name: "types::Vec3".into(),

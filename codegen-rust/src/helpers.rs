@@ -1,13 +1,13 @@
-use crate::{ExternalProtocol, LocalProtocol, TypeProxy, gen_module};
+use crate::{LocalProtocol, ModuleExternalProtocol, TypeProxy, gen_module};
 use convert_case::{Case, Casing};
+use gluon::Derives;
 use gluon_parser::parse_idl;
-use gluon_wire::Derives;
 use std::{fs, path::Path};
 
 /// Generates each module into a separate file within a folder, with a `mod.rs` re-exporting all modules
 pub fn gen_multiple_modules(
     modules: &[(&'static str, &Path)],
-    external_protocols: &[&ExternalProtocol],
+    external_protocols: &[&ModuleExternalProtocol],
     requested_derives: Derives,
     type_proxies: &[TypeProxy],
     output_dir: impl AsRef<Path>,
@@ -49,7 +49,13 @@ pub fn gen_multiple_modules(
             .filter(|v| &v.0 != name)
             .map(|v| &v.1)
             .collect::<Vec<_>>();
-        let module = gen_module(proto, &other_mods, external_protocols, requested_derives, type_proxies);
+        let module = gen_module(
+            proto,
+            &other_mods,
+            external_protocols,
+            requested_derives,
+            type_proxies,
+        );
         let str = prettyplease::unparse(&syn::parse2(module).unwrap());
         fs::write(output_dir.join(format!("{mod_name}.rs")), str).unwrap();
         mod_names.push(mod_name.clone());

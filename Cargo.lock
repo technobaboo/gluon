@@ -110,9 +110,9 @@ version = "0.1.0"
 dependencies = [
  "binderbinder",
  "convert_case",
- "gluon-codegen-rust",
+ "gluon",
+ "gluon-codegen",
  "gluon-parser",
- "gluon-wire",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -200,15 +200,32 @@ dependencies = [
 [[package]]
 name = "gluon"
 version = "0.1.0"
+dependencies = [
+ "binderbinder",
+ "bitflags",
+ "gluon-derive",
+ "rustix",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
-name = "gluon-codegen-rust"
+name = "gluon-codegen"
 version = "0.1.0"
 dependencies = [
  "convert_case",
+ "gluon",
  "gluon-parser",
- "gluon-wire",
  "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "gluon-derive"
+version = "0.1.0"
+dependencies = [
  "proc-macro2",
  "quote",
  "syn",
@@ -223,27 +240,6 @@ dependencies = [
  "chumsky",
  "convert_case",
  "tempfile",
-]
-
-[[package]]
-name = "gluon-wire"
-version = "0.1.0"
-dependencies = [
- "binderbinder",
- "bitflags",
- "gluon-wire-derive",
- "rustix",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "gluon-wire-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

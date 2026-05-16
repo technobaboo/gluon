@@ -1,11 +1,11 @@
 #![allow(unused, clippy::all, private_bounds, private_interfaces)]
-use gluon_wire::GluonConvertable;
-pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::ExternalGluonProtocol {
+use gluon::Convertable;
+pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
     protocol_name: "org.gluon.Types",
     types: &[
-        gluon_wire::ExternalGluonType {
+        gluon::ExternalGluonType {
             name: "Vec3",
-            supported_derives: gluon_wire::Derives::from_bits_truncate(171u32),
+            supported_derives: gluon::Derives::from_bits_truncate(171u32),
         },
     ],
 };
@@ -16,28 +16,26 @@ pub(crate) struct Vec3 {
     pub(crate) y: f32,
     pub(crate) z: f32,
 }
-impl gluon_wire::GluonConvertable for Vec3 {
+impl gluon::Convertable for Vec3 {
     fn write<'a, 'b: 'a>(
         &'b self,
-        gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
-    ) -> Result<(), gluon_wire::GluonWriteError> {
+        gluon_data: &mut gluon::DataBuilder<'a>,
+    ) -> Result<(), gluon::WriteError> {
         self.x.write(gluon_data)?;
         self.y.write(gluon_data)?;
         self.z.write(gluon_data)?;
         Ok(())
     }
-    fn read(
-        gluon_data: &mut gluon_wire::GluonDataReader,
-    ) -> Result<Self, gluon_wire::GluonReadError> {
-        let x = gluon_wire::GluonConvertable::read(gluon_data)?;
-        let y = gluon_wire::GluonConvertable::read(gluon_data)?;
-        let z = gluon_wire::GluonConvertable::read(gluon_data)?;
+    fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
+        let x = gluon::Convertable::read(gluon_data)?;
+        let y = gluon::Convertable::read(gluon_data)?;
+        let z = gluon::Convertable::read(gluon_data)?;
         Ok(Vec3 { x, y, z })
     }
     fn write_owned(
         self,
-        gluon_data: &mut gluon_wire::GluonDataBuilder<'_>,
-    ) -> Result<(), gluon_wire::GluonWriteError> {
+        gluon_data: &mut gluon::DataBuilder<'_>,
+    ) -> Result<(), gluon::WriteError> {
         self.x.write_owned(gluon_data)?;
         self.y.write_owned(gluon_data)?;
         self.z.write_owned(gluon_data)?;

@@ -1,5 +1,5 @@
 [package]
-name = "gluon-wire-derive"
+name = "gluon-derive"
 version.workspace = true
 edition.workspace = true
 

@@ -1,19 +1,18 @@
 use convert_case::{Case, Casing};
 use gluon_parser::{CustomType, EnumDef, Field, Interface, Protocol, StructDef, Type};
-use gluon_wire::ExternalGluonProtocol;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 use std::ops::Deref;
 
-pub use gluon_wire::Derives;
+pub use gluon::Derives;
 
 pub mod helpers;
 
-/// the [`ExternalGluonProtocol`] should come from the `EXTERNAL_PROTOCOL` const from the module
+/// the [`ExternalProtocol`] should come from the `EXTERNAL_PROTOCOL` const from the module
 /// defined in `rust_module`
-pub struct ExternalProtocol {
+pub struct ModuleExternalProtocol {
     pub rust_module: &'static str,
-    pub external_protocol: ExternalGluonProtocol,
+    pub external_protocol: gluon::ExternalProtocol,
 }
 pub struct LocalProtocol {
     /// Short module name (e.g. `"test"`, `"types"`), used to match `TypeProxy` prefixes.
@@ -40,8 +39,8 @@ impl Deref for LocalProtocol {
         &self.protocol
     }
 }
-impl Deref for ExternalProtocol {
-    type Target = ExternalGluonProtocol;
+impl Deref for ModuleExternalProtocol {
+    type Target = gluon::ExternalProtocol;
 
     fn deref(&self) -> &Self::Target {
         &self.external_protocol
@@ -51,7 +50,7 @@ impl Deref for ExternalProtocol {
 pub struct GenCtx<'a> {
     pub curr_protocol: &'a LocalProtocol,
     pub other_local_protocols: &'a [&'a LocalProtocol],
-    pub external_protocols: &'a [&'a ExternalProtocol],
+    pub external_protocols: &'a [&'a ModuleExternalProtocol],
     /// Which derives to attempt on generated structs/enums. A derive is only
     /// applied if every field/variant member supports it.
     pub requested_derives: Derives,
@@ -62,7 +61,7 @@ pub struct GenCtx<'a> {
 pub fn gen_module(
     proto: &LocalProtocol,
     other_local_protocols: &[&LocalProtocol],
-    external_protocols: &[&ExternalProtocol],
+    external_protocols: &[&ModuleExternalProtocol],
     requested_derives: Derives,
     type_proxies: &[TypeProxy],
 ) -> proc_macro2::TokenStream {
@@ -88,7 +87,7 @@ pub fn gen_module(
     let external_proto_const = gen_external_protocol_const(gen_ctx);
     quote! {
         #![allow(unused, clippy::all, private_bounds, private_interfaces)]
-        use gluon_wire::GluonConvertable;
+        use gluon::Convertable;
         #external_proto_const
         #(#structs)*
         #(#enums)*
@@ -111,15 +110,15 @@ pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         .map(|(name, derives)| {
             let bits = derives.bits();
             quote! {
-                gluon_wire::ExternalGluonType {
+                gluon::ExternalGluonType {
                     name: #name,
-                    supported_derives: gluon_wire::Derives::from_bits_truncate(#bits)
+                    supported_derives: gluon::Derives::from_bits_truncate(#bits)
                 }
             }
         });
     let proto_name = &gen_ctx.curr_protocol.name;
     quote! {
-        pub const EXTERNAL_PROTOCOL: gluon_wire::ExternalGluonProtocol = gluon_wire::ExternalGluonProtocol {
+        pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
             protocol_name: #proto_name,
             types: &[#(#types),*],
         };
@@ -319,12 +318,12 @@ pub fn gen_interface(
                     let conv = gen_wire_to_pub(&param.ty, quote! { __w }, gen_ctx);
                     quote! {
                         let #var: #pub_ty = {
-                            let __w: #wire_ty = gluon_wire::GluonConvertable::read(&mut gluon_data)?;
+                            let __w: #wire_ty = gluon::Convertable::read(&mut gluon_data)?;
                             #conv
                         };
                     }
                 } else {
-                    quote! { let #var = gluon_wire::GluonConvertable::read(&mut gluon_data)?; }
+                    quote! { let #var = gluon::Convertable::read(&mut gluon_data)?; }
                 }
             });
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
@@ -350,7 +349,7 @@ pub fn gen_interface(
                 quote! {
                     #i => {
                         let return_callback = gluon_data.read_binder()?;
-                        let mut gluon_out = gluon_wire::GluonDataBuilder::new();
+                        let mut gluon_out = gluon::DataBuilder::new();
                         #(#params)*
                         let (#(#return_names),*) = self.#name(ctx, #(#names),*).await;
                         drop(gluon_data);
@@ -395,14 +394,14 @@ pub fn gen_interface(
             };
             quote! {
                 #doc_comment
-                fn #name(&self, _ctx: gluon_wire::GluonCtx, #(#params),*) #fn_return;
+                fn #name(&self, _ctx: gluon::Context, #(#params),*) #fn_return;
             }
         });
         quote! {
             pub trait #handler_name: binderbinder::device::TransactionHandler + Send + Sync + 'static {
                 #(#methods)*
 
-                fn dispatch_one_way(&self, transaction_code: u32, mut gluon_data: gluon_wire::GluonDataReader, ctx: gluon_wire::GluonCtx) -> impl Future<Output=Result<(),gluon_wire::GluonSendError>> + Send + Sync {
+                fn dispatch_one_way(&self, transaction_code: u32, mut gluon_data: gluon::DataReader, ctx: gluon::Context) -> impl Future<Output=Result<(),gluon::SendError>> + Send + Sync {
                     async move {
                         match transaction_code {
                             #(#methods_dispatch)*
@@ -459,7 +458,7 @@ pub fn gen_interface(
                     };
                     // Read each return from wire, converting to public type when needed.
                     let return_reads: Vec<proc_macro2::TokenStream> = ret_defs.iter().map(|ret_def| {
-                        let base = quote! { gluon_wire::GluonConvertable::read(&mut reader)? };
+                        let base = quote! { gluon::Convertable::read(&mut reader)? };
                         if type_has_proxy(&ret_def.ty, gen_ctx) {
                             let wire_ty = gen_type(&ret_def.ty, gen_ctx);
                             let conv = gen_wire_to_pub(&ret_def.ty, quote! { __w }, gen_ctx);
@@ -475,26 +474,26 @@ pub fn gen_interface(
                     };
                     quote! {
                         #doc_comment
-                        pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon_wire::GluonSendError> {
+                        pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon::SendError> {
                             #(#params_convert)*
-                            let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
-                            let (gluon_ret_handler, mut gluon_recv) = gluon_wire::ReturnHandler::new();
+                            let mut gluon_builder = gluon::DataBuilder::new();
+                            let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
                             let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
                             gluon_builder.write_binder(&gluon_ret)?;
                             #(#params_write)*
                             self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
                             // safe since we're also holding the channel sender
                             let transaction = gluon_recv.recv().await.unwrap();
-                            let mut reader = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+                            let mut reader = gluon::DataReader::from_payload(transaction.payload);
                             Ok(#return_tuple)
                         }
                     }
                 }
                 None => quote! {
                     #doc_comment
-                    pub fn #name(&self, #(#params),*) -> Result<(), gluon_wire::GluonSendError> {
+                    pub fn #name(&self, #(#params),*) -> Result<(), gluon::SendError> {
                         #(#params_convert)*
-                        let mut gluon_builder = gluon_wire::GluonDataBuilder::new();
+                        let mut gluon_builder = gluon::DataBuilder::new();
                         #(#params_write)*
                         self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
                         Ok(())
@@ -508,20 +507,20 @@ pub fn gen_interface(
                 obj: binderbinder::binder_object::BinderObjectOrRef,
             }
 
-            impl gluon_wire::GluonConvertable for #name {
+            impl gluon::Convertable for #name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
-                    gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
-                ) -> Result<(), gluon_wire::GluonWriteError> {
+                    gluon_data: &mut gluon::DataBuilder<'a>,
+                ) -> Result<(), gluon::WriteError> {
                     self.obj.write(gluon_data)
                 }
 
-                fn read(gluon_data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
                     let obj = binderbinder::binder_object::BinderObjectOrRef::read(gluon_data)?;
                     Ok(#name::from_object_or_ref(obj))
                 }
 
-                fn write_owned(self, gluon_data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                fn write_owned(self, gluon_data: &mut gluon::DataBuilder<'_>) -> Result<(), gluon::WriteError> {
                     self.obj.write_owned(gluon_data)
                 }
             }
@@ -680,12 +679,12 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
                 let conv = gen_wire_to_pub(&f.ty, quote! { __w }, gen_ctx);
                 quote! {
                     let #fname: #pub_ty = {
-                        let __w: #wire_ty = gluon_wire::GluonConvertable::read(gluon_data)?;
+                        let __w: #wire_ty = gluon::Convertable::read(gluon_data)?;
                         #conv
                     };
                 }
             } else {
-                quote! { let #fname = gluon_wire::GluonConvertable::read(gluon_data)?; }
+                quote! { let #fname = gluon::Convertable::read(gluon_data)?; }
             }
         });
         let writes_owned = def.fields.iter().map(|f| {
@@ -699,21 +698,21 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
             }
         });
         quote! {
-            impl gluon_wire::GluonConvertable for #name {
+            impl gluon::Convertable for #name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
-                    gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
-                ) -> Result<(), gluon_wire::GluonWriteError> {
+                    gluon_data: &mut gluon::DataBuilder<'a>,
+                ) -> Result<(), gluon::WriteError> {
                     #(#writes)*
                     Ok(())
                 }
 
-                fn read(gluon_data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
                     #(#reads)*
                     Ok(#name {#(#field_names,)*})
                 }
 
-                fn write_owned(self, gluon_data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                fn write_owned(self, gluon_data: &mut gluon::DataBuilder<'_>) -> Result<(), gluon::WriteError> {
                     #(#writes_owned)*
                     Ok(())
                 }
@@ -841,12 +840,12 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
                         let conv = gen_wire_to_pub(&f.ty, quote! { __w }, gen_ctx);
                         quote! {
                             let #fname: #pub_ty = {
-                                let __w: #wire_ty = gluon_wire::GluonConvertable::read(gluon_data)?;
+                                let __w: #wire_ty = gluon::Convertable::read(gluon_data)?;
                                 #conv
                             };
                         }
                     } else {
-                        quote! { let #fname = gluon_wire::GluonConvertable::read(gluon_data)?; }
+                        quote! { let #fname = gluon::Convertable::read(gluon_data)?; }
                     }
                 });
                 quote! {
@@ -858,25 +857,25 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             }
         });
         quote! {
-            impl gluon_wire::GluonConvertable for #enum_name {
+            impl gluon::Convertable for #enum_name {
                 fn write<'a, 'b: 'a>(
                     &'b self,
-                    gluon_data: &mut gluon_wire::GluonDataBuilder<'a>,
-                ) -> Result<(), gluon_wire::GluonWriteError> {
+                    gluon_data: &mut gluon::DataBuilder<'a>,
+                ) -> Result<(), gluon::WriteError> {
                     match self {
                         #(#write_variants)*
                     };
                     Ok(())
                 }
 
-                fn read(gluon_data: &mut gluon_wire::GluonDataReader) -> Result<Self, gluon_wire::GluonReadError> {
+                fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
                     Ok(match gluon_data.read_u16()? {
                         #(#read_variants)*
-                        v => return Err(gluon_wire::GluonReadError::UnknownEnumVariant(v)),
+                        v => return Err(gluon::ReadError::UnknownEnumVariant(v)),
                     })
                 }
 
-                fn write_owned(self, gluon_data: &mut gluon_wire::GluonDataBuilder<'_>) -> Result<(), gluon_wire::GluonWriteError> {
+                fn write_owned(self, gluon_data: &mut gluon::DataBuilder<'_>) -> Result<(), gluon::WriteError> {
                     match self {
                         #(#write_owned_variants)*
                     };

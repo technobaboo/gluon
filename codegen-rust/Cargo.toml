@@ -1,5 +1,5 @@
 [package]
-name = "gluon-codegen-rust"
+name = "gluon-codegen"
 version.workspace = true
 edition.workspace = true
 
@@ -10,4 +10,4 @@ proc-macro2 = "1.0.106"
 syn = "2.0.117"
 quote = "1.0.44"
 gluon-parser.workspace = true
-gluon-wire.workspace = true
+gluon.workspace = true

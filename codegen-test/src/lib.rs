@@ -1,6 +1,6 @@
 use crate::protocol::test::{Test, TestHandler};
 use binderbinder::BinderDevice;
-use gluon_wire::GluonCtx;
+use gluon::Context;
 use std::{
     hash::{DefaultHasher, Hash},
     process,
@@ -41,12 +41,20 @@ pub struct MyVec3 {
 
 impl From<protocol::types::Vec3> for MyVec3 {
     fn from(v: protocol::types::Vec3) -> Self {
-        MyVec3 { x: v.x, y: v.y, z: v.z }
+        MyVec3 {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+        }
     }
 }
 impl From<MyVec3> for protocol::types::Vec3 {
     fn from(v: MyVec3) -> Self {
-        protocol::types::Vec3 { x: v.x, y: v.y, z: v.z }
+        protocol::types::Vec3 {
+            x: v.x,
+            y: v.y,
+            z: v.z,
+        }
     }
 }
 
@@ -70,7 +78,7 @@ impl From<MyColor> for protocol::test::Color {
 }
 
 #[allow(unused)]
-#[derive(Debug, gluon_wire::Handler)]
+#[derive(Debug, gluon::Handler)]
 struct TestHandlerImpl {}
 
 #[expect(unused)]
@@ -80,26 +88,30 @@ fn a(dev: Arc<BinderDevice>) {
 }
 
 impl TestHandler for TestHandlerImpl {
-    async fn quit(&self, _ctx: GluonCtx) {
+    async fn quit(&self, _ctx: Context) {
         process::exit(0);
     }
 
-    async fn ping(&self, _ctx: GluonCtx) {
+    async fn ping(&self, _ctx: Context) {
         println!("got ping");
         let mut hasher = DefaultHasher::new();
         c"nya~".to_owned().hash(&mut hasher);
     }
 
-    async fn echo(&self, _ctx: GluonCtx, input: MyTestEnum) -> MyTestEnum {
+    async fn echo(&self, _ctx: Context, input: MyTestEnum) -> MyTestEnum {
         input
     }
 
-    async fn echo_ref(&self, _ctx: GluonCtx, input: protocol::test::Test) -> protocol::test::Test {
+    async fn echo_ref(&self, _ctx: Context, input: protocol::test::Test) -> protocol::test::Test {
         input
     }
 
-    async fn get_position(&self, _ctx: GluonCtx) -> MyVec3 {
-        MyVec3 { x: 1.0, y: 2.0, z: 3.0 }
+    async fn get_position(&self, _ctx: Context) -> MyVec3 {
+        MyVec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        }
     }
 }
 
@@ -136,7 +148,9 @@ mod tests {
     #[test]
     fn option_proxy_field_type() {
         // MaybeColor.color should be Option<MyColor>, not Option<wire Color>
-        let mc = protocol::test::MaybeColor { color: Some(MyColor::Green) };
+        let mc = protocol::test::MaybeColor {
+            color: Some(MyColor::Green),
+        };
         assert_eq!(mc.color, Some(MyColor::Green));
         let none = protocol::test::MaybeColor { color: None };
         assert_eq!(none.color, None);
@@ -145,9 +159,20 @@ mod tests {
     #[test]
     fn cross_protocol_vec3_round_trips() {
         use protocol::types::Vec3;
-        let wire = Vec3 { x: 1.0, y: 2.0, z: 3.0 };
+        let wire = Vec3 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+        };
         let proxy = MyVec3::from(wire);
-        assert_eq!(proxy, MyVec3 { x: 1.0, y: 2.0, z: 3.0 });
+        assert_eq!(
+            proxy,
+            MyVec3 {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0
+            }
+        );
         let back = Vec3::from(proxy);
         assert_eq!(back.x, 1.0);
         assert_eq!(back.y, 2.0);

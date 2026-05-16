@@ -42,12 +42,12 @@ pub fn derive_handler(input: TokenStream) -> TokenStream {
             self: std::sync::Arc<Self>,
             transaction: binderbinder::device::Transaction,
         ) {
-            let gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+            let gluon_data = gluon::DataReader::from_payload(transaction.payload);
             _ = self
                 .dispatch_one_way(
                     transaction.code,
                     gluon_data,
-                    gluon_wire::GluonCtx {
+                    gluon::Context {
                         sender_pid: transaction.sender_pid,
                         sender_euid: transaction.sender_euid,
                     },
@@ -67,12 +67,12 @@ pub fn derive_handler(input: TokenStream) -> TokenStream {
             self: std::sync::Arc<Self>,
             transaction: binderbinder::device::Transaction,
         ) {
-            let gluon_data = gluon_wire::GluonDataReader::from_payload(transaction.payload);
+            let gluon_data = gluon::DataReader::from_payload(transaction.payload);
             _ = self
                 .dispatch_one_way(
                     transaction.code,
                     gluon_data,
-                    gluon_wire::GluonCtx {
+                    gluon::Context {
                         sender_pid: transaction.sender_pid,
                         sender_euid: transaction.sender_euid,
                     },
