@@ -2,7 +2,7 @@ pub mod primitive_impls;
 pub use binderbinder::{
     TransactionHandler as Handler,
     binder_object::{
-        BinderObject as Object, BinderObjectOrRef as ObjectOrRef,
+        BinderObject as Object, BinderObjectOrRef as ObjectOrRef, BinderObjectRef as ObjectRef,
         OwnedBinderObjectRef as OwnedObjectRef,
     },
     device::Transaction,
