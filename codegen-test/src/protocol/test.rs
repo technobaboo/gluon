@@ -31,6 +31,7 @@ pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
     ],
 };
 pub mod proxies {
+    use super::*;
     pub use crate::MyTestEnum;
     pub use crate::MyColor;
 }
@@ -51,7 +52,7 @@ impl gluon::Convertable for TestStruct {
         self.id.write(gluon_data)?;
         self.binder_ref.write(gluon_data)?;
         {
-            let __w: super::types::Vec3 = self.position.clone().into();
+            let __w: super::types::proxied::Vec3 = self.position.clone().into();
             __w.write_owned(gluon_data)?;
         }
         Ok(())
@@ -61,7 +62,7 @@ impl gluon::Convertable for TestStruct {
         let id = gluon::Convertable::read(gluon_data)?;
         let binder_ref = gluon::Convertable::read(gluon_data)?;
         let position: crate::MyVec3 = {
-            let __w: super::types::Vec3 = gluon::Convertable::read(gluon_data)?;
+            let __w: super::types::proxied::Vec3 = gluon::Convertable::read(gluon_data)?;
             __w.into()
         };
         Ok(TestStruct {
@@ -79,7 +80,7 @@ impl gluon::Convertable for TestStruct {
         self.id.write_owned(gluon_data)?;
         self.binder_ref.write_owned(gluon_data)?;
         {
-            let __w: super::types::Vec3 = self.position.into();
+            let __w: super::types::proxied::Vec3 = self.position.into();
             __w.write_owned(gluon_data)?;
         }
         Ok(())
@@ -97,22 +98,22 @@ impl gluon::Convertable for Palette {
         gluon_data: &mut gluon::DataBuilder<'a>,
     ) -> Result<(), gluon::WriteError> {
         {
-            let __w: Color = self.primary.clone().into();
+            let __w: proxied::Color = self.primary.clone().into();
             __w.write_owned(gluon_data)?;
         }
         {
-            let __w: Color = self.secondary.clone().into();
+            let __w: proxied::Color = self.secondary.clone().into();
             __w.write_owned(gluon_data)?;
         }
         Ok(())
     }
     fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
         let primary: crate::MyColor = {
-            let __w: Color = gluon::Convertable::read(gluon_data)?;
+            let __w: proxied::Color = gluon::Convertable::read(gluon_data)?;
             __w.into()
         };
         let secondary: crate::MyColor = {
-            let __w: Color = gluon::Convertable::read(gluon_data)?;
+            let __w: proxied::Color = gluon::Convertable::read(gluon_data)?;
             __w.into()
         };
         Ok(Palette { primary, secondary })
@@ -122,11 +123,11 @@ impl gluon::Convertable for Palette {
         gluon_data: &mut gluon::DataBuilder<'_>,
     ) -> Result<(), gluon::WriteError> {
         {
-            let __w: Color = self.primary.into();
+            let __w: proxied::Color = self.primary.into();
             __w.write_owned(gluon_data)?;
         }
         {
-            let __w: Color = self.secondary.into();
+            let __w: proxied::Color = self.secondary.into();
             __w.write_owned(gluon_data)?;
         }
         Ok(())
@@ -143,14 +144,14 @@ impl gluon::Convertable for MaybeColor {
         gluon_data: &mut gluon::DataBuilder<'a>,
     ) -> Result<(), gluon::WriteError> {
         {
-            let __w: Option<Color> = self.color.clone().map(|__v| __v.into());
+            let __w: Option<proxied::Color> = self.color.clone().map(|__v| __v.into());
             __w.write_owned(gluon_data)?;
         }
         Ok(())
     }
     fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
         let color: Option<crate::MyColor> = {
-            let __w: Option<Color> = gluon::Convertable::read(gluon_data)?;
+            let __w: Option<proxied::Color> = gluon::Convertable::read(gluon_data)?;
             __w.map(|__v| __v.into())
         };
         Ok(MaybeColor { color })
@@ -160,127 +161,9 @@ impl gluon::Convertable for MaybeColor {
         gluon_data: &mut gluon::DataBuilder<'_>,
     ) -> Result<(), gluon::WriteError> {
         {
-            let __w: Option<Color> = self.color.map(|__v| __v.into());
+            let __w: Option<proxied::Color> = self.color.map(|__v| __v.into());
             __w.write_owned(gluon_data)?;
         }
-        Ok(())
-    }
-}
-///Test enum
-#[derive(Debug)]
-pub(crate) enum TestEnum {
-    TestStruct { test_struct: TestStruct },
-    Fd { fd: std::os::fd::OwnedFd },
-    EmptyVariant,
-}
-impl gluon::Convertable for TestEnum {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        gluon_data: &mut gluon::DataBuilder<'a>,
-    ) -> Result<(), gluon::WriteError> {
-        match self {
-            TestEnum::TestStruct { test_struct } => {
-                gluon_data.write_u16(0u16)?;
-                test_struct.write(gluon_data)?;
-            }
-            TestEnum::Fd { fd } => {
-                gluon_data.write_u16(1u16)?;
-                fd.write(gluon_data)?;
-            }
-            TestEnum::EmptyVariant => {
-                gluon_data.write_u16(2u16)?;
-            }
-        };
-        Ok(())
-    }
-    fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
-        Ok(
-            match gluon_data.read_u16()? {
-                0u16 => {
-                    let test_struct = gluon::Convertable::read(gluon_data)?;
-                    TestEnum::TestStruct {
-                        test_struct,
-                    }
-                }
-                1u16 => {
-                    let fd = gluon::Convertable::read(gluon_data)?;
-                    TestEnum::Fd { fd }
-                }
-                2u16 => TestEnum::EmptyVariant,
-                v => return Err(gluon::ReadError::UnknownEnumVariant(v)),
-            },
-        )
-    }
-    fn write_owned(
-        self,
-        gluon_data: &mut gluon::DataBuilder<'_>,
-    ) -> Result<(), gluon::WriteError> {
-        match self {
-            TestEnum::TestStruct { test_struct } => {
-                gluon_data.write_u16(0u16)?;
-                test_struct.write_owned(gluon_data)?;
-            }
-            TestEnum::Fd { fd } => {
-                gluon_data.write_u16(1u16)?;
-                fd.write_owned(gluon_data)?;
-            }
-            TestEnum::EmptyVariant => {
-                gluon_data.write_u16(2u16)?;
-            }
-        };
-        Ok(())
-    }
-}
-///Simple unit-variant enum used to test proxy propagation into struct fields
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Color {
-    Red,
-    Green,
-    Blue,
-}
-impl gluon::Convertable for Color {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        gluon_data: &mut gluon::DataBuilder<'a>,
-    ) -> Result<(), gluon::WriteError> {
-        match self {
-            Color::Red => {
-                gluon_data.write_u16(0u16)?;
-            }
-            Color::Green => {
-                gluon_data.write_u16(1u16)?;
-            }
-            Color::Blue => {
-                gluon_data.write_u16(2u16)?;
-            }
-        };
-        Ok(())
-    }
-    fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
-        Ok(
-            match gluon_data.read_u16()? {
-                0u16 => Color::Red,
-                1u16 => Color::Green,
-                2u16 => Color::Blue,
-                v => return Err(gluon::ReadError::UnknownEnumVariant(v)),
-            },
-        )
-    }
-    fn write_owned(
-        self,
-        gluon_data: &mut gluon::DataBuilder<'_>,
-    ) -> Result<(), gluon::WriteError> {
-        match self {
-            Color::Red => {
-                gluon_data.write_u16(0u16)?;
-            }
-            Color::Green => {
-                gluon_data.write_u16(1u16)?;
-            }
-            Color::Blue => {
-                gluon_data.write_u16(2u16)?;
-            }
-        };
         Ok(())
     }
 }
@@ -326,7 +209,7 @@ impl Test {
         &self,
         input: crate::MyTestEnum,
     ) -> Result<crate::MyTestEnum, gluon::SendError> {
-        let input: TestEnum = input.into();
+        let input: proxied::TestEnum = input.into();
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -338,7 +221,7 @@ impl Test {
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
         Ok({
-            let __w: TestEnum = gluon::Convertable::read(&mut reader)?;
+            let __w: proxied::TestEnum = gluon::Convertable::read(&mut reader)?;
             __w.into()
         })
     }
@@ -389,7 +272,9 @@ impl Test {
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
         Ok({
-            let __w: super::types::Vec3 = gluon::Convertable::read(&mut reader)?;
+            let __w: super::types::proxied::Vec3 = gluon::Convertable::read(
+                &mut reader,
+            )?;
             __w.into()
         })
     }
@@ -469,12 +354,14 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
                     let param_input: crate::MyTestEnum = {
-                        let __w: TestEnum = gluon::Convertable::read(&mut gluon_data)?;
+                        let __w: proxied::TestEnum = gluon::Convertable::read(
+                            &mut gluon_data,
+                        )?;
                         __w.into()
                     };
                     let (output) = self.echo(ctx, param_input).await;
                     drop(gluon_data);
-                    let __w: TestEnum = output.into();
+                    let __w: proxied::TestEnum = output.into();
                     __w.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
@@ -507,7 +394,7 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                     let mut gluon_out = gluon::DataBuilder::new();
                     let (position) = self.get_position(ctx).await;
                     drop(gluon_data);
-                    let __w: super::types::Vec3 = position.into();
+                    let __w: super::types::proxied::Vec3 = position.into();
                     __w.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
@@ -515,6 +402,127 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                 }
                 _ => {}
             }
+            Ok(())
+        }
+    }
+}
+pub mod proxied {
+    use super::*;
+    ///Test enum
+    #[derive(Debug)]
+    pub enum TestEnum {
+        TestStruct { test_struct: TestStruct },
+        Fd { fd: std::os::fd::OwnedFd },
+        EmptyVariant,
+    }
+    impl gluon::Convertable for TestEnum {
+        fn write<'a, 'b: 'a>(
+            &'b self,
+            gluon_data: &mut gluon::DataBuilder<'a>,
+        ) -> Result<(), gluon::WriteError> {
+            match self {
+                TestEnum::TestStruct { test_struct } => {
+                    gluon_data.write_u16(0u16)?;
+                    test_struct.write(gluon_data)?;
+                }
+                TestEnum::Fd { fd } => {
+                    gluon_data.write_u16(1u16)?;
+                    fd.write(gluon_data)?;
+                }
+                TestEnum::EmptyVariant => {
+                    gluon_data.write_u16(2u16)?;
+                }
+            };
+            Ok(())
+        }
+        fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
+            Ok(
+                match gluon_data.read_u16()? {
+                    0u16 => {
+                        let test_struct = gluon::Convertable::read(gluon_data)?;
+                        TestEnum::TestStruct {
+                            test_struct,
+                        }
+                    }
+                    1u16 => {
+                        let fd = gluon::Convertable::read(gluon_data)?;
+                        TestEnum::Fd { fd }
+                    }
+                    2u16 => TestEnum::EmptyVariant,
+                    v => return Err(gluon::ReadError::UnknownEnumVariant(v)),
+                },
+            )
+        }
+        fn write_owned(
+            self,
+            gluon_data: &mut gluon::DataBuilder<'_>,
+        ) -> Result<(), gluon::WriteError> {
+            match self {
+                TestEnum::TestStruct { test_struct } => {
+                    gluon_data.write_u16(0u16)?;
+                    test_struct.write_owned(gluon_data)?;
+                }
+                TestEnum::Fd { fd } => {
+                    gluon_data.write_u16(1u16)?;
+                    fd.write_owned(gluon_data)?;
+                }
+                TestEnum::EmptyVariant => {
+                    gluon_data.write_u16(2u16)?;
+                }
+            };
+            Ok(())
+        }
+    }
+    ///Simple unit-variant enum used to test proxy propagation into struct fields
+    #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum Color {
+        Red,
+        Green,
+        Blue,
+    }
+    impl gluon::Convertable for Color {
+        fn write<'a, 'b: 'a>(
+            &'b self,
+            gluon_data: &mut gluon::DataBuilder<'a>,
+        ) -> Result<(), gluon::WriteError> {
+            match self {
+                Color::Red => {
+                    gluon_data.write_u16(0u16)?;
+                }
+                Color::Green => {
+                    gluon_data.write_u16(1u16)?;
+                }
+                Color::Blue => {
+                    gluon_data.write_u16(2u16)?;
+                }
+            };
+            Ok(())
+        }
+        fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
+            Ok(
+                match gluon_data.read_u16()? {
+                    0u16 => Color::Red,
+                    1u16 => Color::Green,
+                    2u16 => Color::Blue,
+                    v => return Err(gluon::ReadError::UnknownEnumVariant(v)),
+                },
+            )
+        }
+        fn write_owned(
+            self,
+            gluon_data: &mut gluon::DataBuilder<'_>,
+        ) -> Result<(), gluon::WriteError> {
+            match self {
+                Color::Red => {
+                    gluon_data.write_u16(0u16)?;
+                }
+                Color::Green => {
+                    gluon_data.write_u16(1u16)?;
+                }
+                Color::Blue => {
+                    gluon_data.write_u16(2u16)?;
+                }
+            };
             Ok(())
         }
     }

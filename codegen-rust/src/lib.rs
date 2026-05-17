@@ -80,10 +80,22 @@ pub fn gen_module(
     let structs = proto
         .structs
         .iter()
+        .filter(|(name, _)| find_proxy_by_name(name, gen_ctx).is_none())
         .map(|(_name, def)| gen_struct(def, gen_ctx));
     let enums = proto
         .enums
         .iter()
+        .filter(|(name, _)| find_proxy_by_name(name, gen_ctx).is_none())
+        .map(|(_name, def)| gen_enum(def, gen_ctx));
+    let proxied_structs = proto
+        .structs
+        .iter()
+        .filter(|(name, _)| find_proxy_by_name(name, gen_ctx).is_some())
+        .map(|(_name, def)| gen_struct(def, gen_ctx));
+    let proxied_enums = proto
+        .enums
+        .iter()
+        .filter(|(name, _)| find_proxy_by_name(name, gen_ctx).is_some())
         .map(|(_name, def)| gen_enum(def, gen_ctx));
     let external_proto_const = gen_external_protocol_def(gen_ctx);
     quote! {
@@ -93,6 +105,11 @@ pub fn gen_module(
         #(#structs)*
         #(#enums)*
         #(#interfaces)*
+        pub mod proxied {
+            use super::*;
+            #(#proxied_structs)*
+            #(#proxied_enums)*
+        }
     }
 }
 pub fn gen_external_protocol_def(gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
@@ -149,7 +166,7 @@ pub fn gen_external_protocol_def(gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
         )
         .filter_map(|p| p)
         .map(|proxy| {
-            let fragments = proxy.rust_type.split("::").map(|v| format_ident!("{}",v));
+            let fragments = proxy.rust_type.split("::").map(|v| format_ident!("{}", v));
             quote! {pub use #(#fragments)::*;}
         });
     let proto_name = &gen_ctx.curr_protocol.name;
@@ -159,6 +176,7 @@ pub fn gen_external_protocol_def(gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             types: &[#(#types),*],
         };
         pub mod proxies {
+            use super::*;
             #(#proxy_reexports)*
         }
     }
@@ -217,7 +235,7 @@ fn find_proxy_for_qualified(
         let ty = target.types.iter().find(|v| v.name == type_name)?;
         Some(TypeProxy {
             protocol_type_name: type_name.to_string(),
-            rust_type: ty.proxy?.to_string(),
+            rust_type: format!("{}::{}", target.rust_module, ty.proxy?),
             derives: ty.supported_derives,
         })
     }
@@ -702,20 +720,10 @@ fn named_type_contains_inline(
 }
 
 pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
-    let is_proxied = find_proxy_by_name(&def.name, gen_ctx).is_some();
-    let vis = if is_proxied {
-        quote! { pub(crate) }
-    } else {
-        quote! { pub }
-    };
-    let fields = def.fields.iter().map(|f| {
-        gen_field_struct(
-            f,
-            gen_ctx,
-            type_is_recursive(&f.ty, &def.name, gen_ctx),
-            is_proxied,
-        )
-    });
+    let fields = def
+        .fields
+        .iter()
+        .map(|f| gen_field_struct(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx)));
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(struct_supported_derives(def, gen_ctx));
     let name = format_ident!("{}", name);
@@ -787,7 +795,7 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
     quote! {
         #[doc = #doc]
         #[derive(Debug, #(#derives),*)]
-        #vis struct #name {
+        pub struct #name {
             #(#fields)*
         }
 
@@ -817,12 +825,6 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
             }
         }
     });
-    let is_proxied = find_proxy_by_name(&def.name, gen_ctx).is_some();
-    let vis = if is_proxied {
-        quote! { pub(crate) }
-    } else {
-        quote! { pub }
-    };
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(enum_supported_derives(def, gen_ctx));
     let enum_name = format_ident!("{}", name);
@@ -952,7 +954,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     quote! {
         #[doc = #doc]
         #[derive(Debug, #(#derives),*)]
-        #vis enum #enum_name {
+        pub enum #enum_name {
             #(#variants),*
         }
 
@@ -974,61 +976,70 @@ pub fn gen_field_enum(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2
         #name: #type_def,
     }
 }
-pub fn gen_field_struct(
-    def: &Field,
-    gen_ctx: &GenCtx,
-    boxed: bool,
-    parent_is_proxied: bool,
-) -> proc_macro2::TokenStream {
+pub fn gen_field_struct(def: &Field, gen_ctx: &GenCtx, boxed: bool) -> proc_macro2::TokenStream {
     let type_def = gen_public_type(&def.ty, gen_ctx);
     let type_def = if boxed {
         quote! { Box<#type_def> }
     } else {
         type_def
     };
-    let vis = if parent_is_proxied {
-        quote! { pub(crate) }
-    } else {
-        quote! { pub }
-    };
     let name = format_ident!("{}", def.name.to_case(Case::Snake));
     let doc_comment = def.doc.as_ref().map(|str| quote! {#[doc = #str]});
     quote! {
         #doc_comment
-        #vis #name: #type_def,
+        pub #name: #type_def,
     }
 }
 
 pub fn gen_custom_type(custom: &CustomType, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     match custom {
         CustomType::Named(name) => {
-            let name = format_ident!("{}", name.to_case(Case::Pascal));
-            quote! {#name}
+            if find_proxy_by_name(name, gen_ctx).is_some() {
+                let name = format_ident!("{}", name.to_case(Case::Pascal));
+                quote! {proxied::#name}
+            } else {
+                let name = format_ident!("{}", name.to_case(Case::Pascal));
+                quote! {#name}
+            }
         }
-        CustomType::Qualified(namespace, name) => {
+        CustomType::Qualified(namespace, type_name) => {
             let import = gen_ctx
                 .curr_protocol
                 .imports
                 .iter()
                 .find(|v| &v.alias == namespace)
                 .expect("unknown namespace used in qualified type");
-            let name = format_ident!("{}", name.to_case(Case::Pascal));
+            let name = format_ident!("{}", type_name.to_case(Case::Pascal));
             // Check local protocols first (sibling modules in the same output file)
-            let rust_mod = gen_ctx
+            let (rust_mod, proxied) = gen_ctx
                 .other_local_protocols
                 .iter()
                 .find(|v| v.name == import.name)
-                .map(|v| v.rust_module.clone())
+                .map(|v| {
+                    (
+                        v.rust_module.clone(),
+                        find_proxy_for_qualified(namespace, type_name, gen_ctx).is_some(),
+                    )
+                })
                 .or_else(|| {
                     gen_ctx
                         .external_protocols
                         .iter()
                         .find(|v| v.protocol_name == import.name)
-                        .map(|v| v.rust_module.to_string())
+                        .map(|v| {
+                            (
+                                v.rust_module.to_string(),
+                                find_proxy_for_qualified(namespace, type_name, gen_ctx).is_some(),
+                            )
+                        })
                 })
                 .expect("failed to resolve namespace for qualified type");
             let namespace_path = rust_mod.split("::").map(|v| format_ident!("{}", v));
-            quote! {#(#namespace_path)::*::#name}
+            if proxied {
+                quote! {#(#namespace_path)::*::proxied::#name}
+            } else {
+                quote! {#(#namespace_path)::*::#name}
+            }
         }
     }
 }

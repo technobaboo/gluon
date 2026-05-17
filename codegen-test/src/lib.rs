@@ -8,7 +8,7 @@ use std::{
 mod protocol;
 
 /// Proxy type for the wire `TestEnum` — demonstrates method-signature proxying.
-pub struct MyTestEnum(protocol::test::TestEnum);
+pub struct MyTestEnum(protocol::test::proxied::TestEnum);
 
 /// Proxy type for the wire `Color` — demonstrates proxy propagation into struct fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,12 +18,12 @@ pub enum MyColor {
     Blue,
 }
 
-impl From<protocol::test::TestEnum> for MyTestEnum {
-    fn from(v: protocol::test::TestEnum) -> Self {
+impl From<protocol::test::proxied::TestEnum> for MyTestEnum {
+    fn from(v: protocol::test::proxied::TestEnum) -> Self {
         MyTestEnum(v)
     }
 }
-impl From<MyTestEnum> for protocol::test::TestEnum {
+impl From<MyTestEnum> for protocol::test::proxied::TestEnum {
     fn from(v: MyTestEnum) -> Self {
         v.0
     }
@@ -37,8 +37,8 @@ pub struct MyVec3 {
     pub z: f32,
 }
 
-impl From<protocol::types::Vec3> for MyVec3 {
-    fn from(v: protocol::types::Vec3) -> Self {
+impl From<protocol::types::proxied::Vec3> for MyVec3 {
+    fn from(v: protocol::types::proxied::Vec3) -> Self {
         MyVec3 {
             x: v.x,
             y: v.y,
@@ -46,9 +46,9 @@ impl From<protocol::types::Vec3> for MyVec3 {
         }
     }
 }
-impl From<MyVec3> for protocol::types::Vec3 {
+impl From<MyVec3> for protocol::types::proxied::Vec3 {
     fn from(v: MyVec3) -> Self {
-        protocol::types::Vec3 {
+        protocol::types::proxied::Vec3 {
             x: v.x,
             y: v.y,
             z: v.z,
@@ -56,21 +56,21 @@ impl From<MyVec3> for protocol::types::Vec3 {
     }
 }
 
-impl From<protocol::test::Color> for MyColor {
-    fn from(c: protocol::test::Color) -> Self {
+impl From<protocol::test::proxied::Color> for MyColor {
+    fn from(c: protocol::test::proxied::Color) -> Self {
         match c {
-            protocol::test::Color::Red => MyColor::Red,
-            protocol::test::Color::Green => MyColor::Green,
-            protocol::test::Color::Blue => MyColor::Blue,
+            protocol::test::proxied::Color::Red => MyColor::Red,
+            protocol::test::proxied::Color::Green => MyColor::Green,
+            protocol::test::proxied::Color::Blue => MyColor::Blue,
         }
     }
 }
-impl From<MyColor> for protocol::test::Color {
+impl From<MyColor> for protocol::test::proxied::Color {
     fn from(c: MyColor) -> Self {
         match c {
-            MyColor::Red => protocol::test::Color::Red,
-            MyColor::Green => protocol::test::Color::Green,
-            MyColor::Blue => protocol::test::Color::Blue,
+            MyColor::Red => protocol::test::proxied::Color::Red,
+            MyColor::Green => protocol::test::proxied::Color::Green,
+            MyColor::Blue => protocol::test::proxied::Color::Blue,
         }
     }
 }
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn my_color_from_wire_round_trips() {
-        use protocol::test::Color;
+        use protocol::test::proxied::Color;
         for (wire, expected) in [
             (Color::Red, MyColor::Red),
             (Color::Green, MyColor::Green),
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn cross_protocol_vec3_round_trips() {
-        use protocol::types::Vec3;
+        use protocol::types::proxied::Vec3;
         let wire = Vec3 {
             x: 1.0,
             y: 2.0,
