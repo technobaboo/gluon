@@ -415,12 +415,15 @@ pub fn gen_interface(
     };
     let proxy = {
         let methods = def.methods.iter().enumerate().map(|(i, method)| {
-            // Params: proxy/nested-proxy types taken directly; non-proxy uses impl Into<WireType>.
+            // Params: proxy/nested-proxy types taken directly; untyped refs take &impl OwnedObjectRef;
+            // all others use impl Into<WireType>.
             let params = method.params.iter().map(|param| {
                 let name = format_ident!("{}", param.name.to_case(Case::Snake));
                 if type_has_proxy(&param.ty, gen_ctx) {
                     let pub_ty = gen_public_type(&param.ty, gen_ctx);
                     quote! { #name: #pub_ty }
+                } else if matches!(param.ty, Type::Ref(None)) {
+                    quote! { #name: &impl gluon::OwnedObjectRef }
                 } else {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
                     quote! { #name: impl Into<#wire_ty> }
@@ -433,6 +436,8 @@ pub fn gen_interface(
                 if type_has_proxy(&param.ty, gen_ctx) {
                     let conv = gen_pub_to_wire(&param.ty, quote! { #name }, gen_ctx);
                     quote! { let #name: #wire_ty = #conv; }
+                } else if matches!(param.ty, Type::Ref(None)) {
+                    quote! { let #name: #wire_ty = gluon::OwnedObjectRef::to_object_or_ref(#name); }
                 } else {
                     quote! { let #name: #wire_ty = #name.into(); }
                 }
