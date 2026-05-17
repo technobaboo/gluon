@@ -3,7 +3,7 @@ pub use binderbinder::{
     TransactionHandler as Handler,
     binder_object::{
         BinderObject as Object, BinderObjectOrRef as ObjectOrRef,
-        OwnedBinderObjectRefTrait as OwnedObjectRef,
+        OwnedBinderObjectRef as OwnedObjectRef,
     },
     device::Transaction,
     payload::PayloadBuilder,

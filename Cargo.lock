@@ -44,7 +44,7 @@ dependencies = [
 [[package]]
 name = "binderbinder"
 version = "0.1.0"
-source = "git+https://github.com/technobaboo/binderbinder#18bb4e9332df11164c3d232267d7b3428447523c"
+source = "git+https://github.com/technobaboo/binderbinder#3b3cf21ee04f88c35a018f13f0e113cacb118056"
 dependencies = [
  "bitflags",
  "byteorder",
