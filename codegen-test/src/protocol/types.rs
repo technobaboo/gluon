@@ -6,9 +6,13 @@ pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
         gluon::ExternalGluonType {
             name: "Vec3",
             supported_derives: gluon::Derives::from_bits_truncate(171u32),
+            proxy: Some("proxies::MyVec3"),
         },
     ],
 };
+pub mod proxies {
+    pub use crate::MyVec3;
+}
 ///3D vector
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Default)]
 pub(crate) struct Vec3 {

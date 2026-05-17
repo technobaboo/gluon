@@ -432,5 +432,6 @@ pub struct ExternalProtocol {
 #[derive(Clone, Copy, Debug)]
 pub struct ExternalGluonType {
     pub name: &'static str,
+    pub proxy: Option<&'static str>,
     pub supported_derives: Derives,
 }

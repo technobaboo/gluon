@@ -6,25 +6,34 @@ pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
         gluon::ExternalGluonType {
             name: "TestStruct",
             supported_derives: gluon::Derives::from_bits_truncate(2u32),
+            proxy: None,
         },
         gluon::ExternalGluonType {
             name: "Palette",
             supported_derives: gluon::Derives::from_bits_truncate(31u32),
+            proxy: None,
         },
         gluon::ExternalGluonType {
             name: "MaybeColor",
             supported_derives: gluon::Derives::from_bits_truncate(31u32),
+            proxy: None,
         },
         gluon::ExternalGluonType {
             name: "TestEnum",
             supported_derives: gluon::Derives::from_bits_truncate(0u32),
+            proxy: Some("proxies::MyTestEnum"),
         },
         gluon::ExternalGluonType {
             name: "Color",
             supported_derives: gluon::Derives::from_bits_truncate(127u32),
+            proxy: Some("proxies::MyColor"),
         },
     ],
 };
+pub mod proxies {
+    pub use crate::MyTestEnum;
+    pub use crate::MyColor;
+}
 ///test struct
 #[derive(Debug, Clone)]
 pub struct TestStruct {

@@ -20,6 +20,7 @@ pub struct LocalProtocol {
     pub rust_module: String,
     pub protocol: Protocol,
 }
+#[derive(Clone)]
 /// Maps a protocol type name to an existing Rust type that should be used in the public API
 /// instead. The crate implementing the protocol must provide `From<WireType> for RustType` and
 /// `From<RustType> for WireType` impls. The generated wire types become `pub(crate)`.
@@ -84,7 +85,7 @@ pub fn gen_module(
         .enums
         .iter()
         .map(|(_name, def)| gen_enum(def, gen_ctx));
-    let external_proto_const = gen_external_protocol_const(gen_ctx);
+    let external_proto_const = gen_external_protocol_def(gen_ctx);
     quote! {
         #![allow(unused, clippy::all, private_bounds, private_interfaces)]
         use gluon::Convertable;
@@ -94,27 +95,62 @@ pub fn gen_module(
         #(#interfaces)*
     }
 }
-pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
+pub fn gen_external_protocol_def(gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     let types = gen_ctx
         .curr_protocol
         .structs
         .iter()
-        .map(|(name, v)| (name.clone(), struct_supported_derives(v, gen_ctx)))
+        .map(|(name, v)| {
+            (
+                name.clone(),
+                struct_supported_derives(v, gen_ctx),
+                find_proxy_by_name(name, gen_ctx),
+            )
+        })
+        .chain(gen_ctx.curr_protocol.enums.iter().map(|(name, v)| {
+            (
+                name.clone(),
+                enum_supported_derives(v, gen_ctx),
+                find_proxy_by_name(name, gen_ctx),
+            )
+        }))
+        .map(|(name, derives, proxy)| {
+            let bits = derives.bits();
+            let proxy = proxy
+                .map(|v| {
+                    let name = v
+                        .rust_type
+                        .split("::")
+                        .last()
+                        .expect("unable to split proxy rust type");
+                    let v = format!("proxies::{name}");
+                    quote! {Some(#v)}
+                })
+                .unwrap_or_else(|| quote! {None});
+            quote! {
+                gluon::ExternalGluonType {
+                    name: #name,
+                    supported_derives: gluon::Derives::from_bits_truncate(#bits),
+                    proxy: #proxy,
+                }
+            }
+        });
+    let proxy_reexports = gen_ctx
+        .curr_protocol
+        .structs
+        .iter()
+        .map(|(name, _)| find_proxy_by_name(name, gen_ctx))
         .chain(
             gen_ctx
                 .curr_protocol
                 .enums
                 .iter()
-                .map(|(name, v)| (name.clone(), enum_supported_derives(v, gen_ctx))),
+                .map(|(name, _)| find_proxy_by_name(name, gen_ctx)),
         )
-        .map(|(name, derives)| {
-            let bits = derives.bits();
-            quote! {
-                gluon::ExternalGluonType {
-                    name: #name,
-                    supported_derives: gluon::Derives::from_bits_truncate(#bits)
-                }
-            }
+        .filter_map(|p| p)
+        .map(|proxy| {
+            let fragments = proxy.rust_type.split("::").map(|v| format_ident!("{}",v));
+            quote! {pub use #(#fragments)::*;}
         });
     let proto_name = &gen_ctx.curr_protocol.name;
     quote! {
@@ -122,6 +158,9 @@ pub fn gen_external_protocol_const(gen_ctx: &GenCtx) -> proc_macro2::TokenStream
             protocol_name: #proto_name,
             types: &[#(#types),*],
         };
+        pub mod proxies {
+            #(#proxy_reexports)*
+        }
     }
 }
 fn proxy_matches(p: &TypeProxy, type_name: &str, gen_ctx: &GenCtx) -> bool {
@@ -144,36 +183,52 @@ fn find_proxy_by_name<'a>(type_name: &str, gen_ctx: &'a GenCtx) -> Option<&'a Ty
 
 /// Finds the registered proxy for a qualified type (`namespace::TypeName`), resolving the import
 /// alias to the target protocol's `module_name` before matching.
-fn find_proxy_for_qualified<'a>(
+fn find_proxy_for_qualified(
     namespace: &str,
     type_name: &str,
-    gen_ctx: &'a GenCtx,
-) -> Option<&'a TypeProxy> {
+    gen_ctx: &GenCtx,
+) -> Option<TypeProxy> {
     let import = gen_ctx
         .curr_protocol
         .imports
         .iter()
         .find(|v| v.alias == namespace)?;
-    let target = gen_ctx
+    if let Some(target) = gen_ctx
         .other_local_protocols
         .iter()
-        .find(|v| v.name == import.name)?;
-    gen_ctx
-        .type_proxies
-        .iter()
-        .find(|p| match p.protocol_type_name.split_once("::") {
-            Some((prefix, name)) => prefix == target.module_name && name == type_name,
-            None => panic!(
-                "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
-                p.protocol_type_name
-            ),
+        .find(|v| v.name == import.name)
+    {
+        gen_ctx
+            .type_proxies
+            .iter()
+            .find(|p| match p.protocol_type_name.split_once("::") {
+                Some((prefix, name)) => prefix == target.module_name && name == type_name,
+                None => panic!(
+                    "TypeProxy::protocol_type_name must be \"module::TypeName\", got {:?}",
+                    p.protocol_type_name
+                ),
+            })
+            .cloned()
+    } else {
+        let target = gen_ctx
+            .external_protocols
+            .iter()
+            .find(|v| v.protocol_name == import.name)?;
+        let ty = target.types.iter().find(|v| v.name == type_name)?;
+        Some(TypeProxy {
+            protocol_type_name: type_name.to_string(),
+            rust_type: ty.proxy?.to_string(),
+            derives: ty.supported_derives,
         })
+    }
 }
 
 /// Finds the registered proxy for a `Type`, returning its parsed `TokenStream`.
 fn find_proxy(ty: &Type, gen_ctx: &GenCtx) -> Option<proc_macro2::TokenStream> {
     let proxy = match ty {
-        Type::Custom(CustomType::Named(type_name)) => find_proxy_by_name(type_name, gen_ctx),
+        Type::Custom(CustomType::Named(type_name)) => {
+            find_proxy_by_name(type_name, gen_ctx).cloned()
+        }
         Type::Custom(CustomType::Qualified(namespace, type_name)) => {
             find_proxy_for_qualified(namespace, type_name, gen_ctx)
         }
