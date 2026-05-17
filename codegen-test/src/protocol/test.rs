@@ -378,6 +378,11 @@ impl From<Test> for gluon::ObjectOrRef {
         value.obj
     }
 }
+impl gluon::ToObjectOrRef for Test {
+    fn to_binder_object_or_ref(&self) -> gluon::ObjectOrRef {
+        self.obj.clone()
+    }
+}
 impl std::hash::Hash for Test {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.obj.hash(state);

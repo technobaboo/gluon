@@ -423,7 +423,7 @@ pub fn gen_interface(
                     let pub_ty = gen_public_type(&param.ty, gen_ctx);
                     quote! { #name: #pub_ty }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { #name: &impl gluon::ObjectOrRef }
+                    quote! { #name: &impl gluon::ToObjectOrRef }
                 } else {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
                     quote! { #name: impl Into<#wire_ty> }
@@ -544,6 +544,11 @@ pub fn gen_interface(
             impl From<#name> for gluon::ObjectOrRef {
                 fn from(value: #name) -> Self {
                     value.obj
+                }
+            }
+            impl gluon::ToObjectOrRef for #name {
+                fn to_binder_object_or_ref(&self) -> gluon::ObjectOrRef {
+                    self.obj.clone()
                 }
             }
             impl std::hash::Hash for #name {
