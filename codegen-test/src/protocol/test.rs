@@ -365,7 +365,7 @@ impl Test {
             __w.into()
         })
     }
-    pub fn from_handler(obj: &impl gluon::OwnedObjectRef) -> Test {
+    pub fn from_handler<H: TestHandler>(obj: &impl gluon::OwnedObjectRef<H>) -> Test {
         Test::from_object_or_ref(gluon::OwnedObjectRef::to_object_or_ref(obj))
     }
     ///only use this when you know the binder ref implements this interface, else the consquences are for you to find out

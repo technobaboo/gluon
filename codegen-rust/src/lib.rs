@@ -423,7 +423,7 @@ pub fn gen_interface(
                     let pub_ty = gen_public_type(&param.ty, gen_ctx);
                     quote! { #name: #pub_ty }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { #name: &impl gluon::OwnedObjectRef }
+                    quote! { #name: &impl gluon::ObjectOrRef }
                 } else {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
                     quote! { #name: impl Into<#wire_ty> }
@@ -437,7 +437,7 @@ pub fn gen_interface(
                     let conv = gen_pub_to_wire(&param.ty, quote! { #name }, gen_ctx);
                     quote! { let #name: #wire_ty = #conv; }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { let #name: #wire_ty = gluon::OwnedObjectRef::to_object_or_ref(#name); }
+                    quote! { let #name: #wire_ty = #name; }
                 } else {
                     quote! { let #name: #wire_ty = #name.into(); }
                 }
@@ -531,7 +531,7 @@ pub fn gen_interface(
             }
             impl #name {
                 #(#methods)*
-                pub fn from_handler(obj: &impl gluon::OwnedObjectRef) -> #name {
+                pub fn from_handler<H: #handler_name>(obj: &impl gluon::OwnedObjectRef<H>) -> #name {
                     #name::from_object_or_ref(gluon::OwnedObjectRef::to_object_or_ref(obj))
                 }
                 #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
