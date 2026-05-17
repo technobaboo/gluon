@@ -98,6 +98,14 @@ impl TestHandler for TestHandlerImpl {
         input
     }
 
+    async fn echo_untyped_ref(
+        &self,
+        _ctx: gluon::Context,
+        input: gluon::ObjectOrRef,
+    ) -> gluon::ObjectOrRef {
+        input
+    }
+
     async fn get_position(&self, _ctx: Context) -> MyVec3 {
         MyVec3 {
             x: 1.0,

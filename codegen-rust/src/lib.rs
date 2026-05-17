@@ -437,7 +437,7 @@ pub fn gen_interface(
                     let conv = gen_pub_to_wire(&param.ty, quote! { #name }, gen_ctx);
                     quote! { let #name: #wire_ty = #conv; }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { let #name: #wire_ty = #name; }
+                    quote! { let #name: #wire_ty = gluon::ToObjectOrRef::to_binder_object_or_ref(#name); }
                 } else {
                     quote! { let #name: #wire_ty = #name.into(); }
                 }

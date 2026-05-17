@@ -350,6 +350,25 @@ impl Test {
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
         Ok(gluon::Convertable::read(&mut reader)?)
     }
+    pub async fn echo_untyped_ref(
+        &self,
+        input: &impl gluon::ToObjectOrRef,
+    ) -> Result<gluon::ObjectOrRef, gluon::SendError> {
+        let input: gluon::ObjectOrRef = gluon::ToObjectOrRef::to_binder_object_or_ref(
+            input,
+        );
+        let mut gluon_builder = gluon::DataBuilder::new();
+        let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
+        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
+        gluon_builder.write_binder(&gluon_ret)?;
+        input.write(&mut gluon_builder)?;
+        self.obj
+            .device()
+            .transact_one_way(&self.obj, 12u32, gluon_builder.to_payload())?;
+        let transaction = gluon_recv.recv().await.unwrap();
+        let mut reader = gluon::DataReader::from_payload(transaction.payload);
+        Ok(gluon::Convertable::read(&mut reader)?)
+    }
     pub async fn get_position(&self) -> Result<crate::MyVec3, gluon::SendError> {
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
@@ -357,7 +376,7 @@ impl Test {
         gluon_builder.write_binder(&gluon_ret)?;
         self.obj
             .device()
-            .transact_one_way(&self.obj, 12u32, gluon_builder.to_payload())?;
+            .transact_one_way(&self.obj, 13u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
         Ok({
@@ -407,6 +426,11 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
         _ctx: gluon::Context,
         input: Test,
     ) -> impl Future<Output = Test> + Send + Sync;
+    fn echo_untyped_ref(
+        &self,
+        _ctx: gluon::Context,
+        input: gluon::ObjectOrRef,
+    ) -> impl Future<Output = gluon::ObjectOrRef> + Send + Sync;
     fn get_position(
         &self,
         _ctx: gluon::Context,
@@ -459,6 +483,17 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
                 }
                 12u32 => {
+                    let return_callback = gluon_data.read_binder()?;
+                    let mut gluon_out = gluon::DataBuilder::new();
+                    let param_input = gluon::Convertable::read(&mut gluon_data)?;
+                    let (output) = self.echo_untyped_ref(ctx, param_input).await;
+                    drop(gluon_data);
+                    output.write_owned(&mut gluon_out)?;
+                    return_callback
+                        .device()
+                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                }
+                13u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
                     let (position) = self.get_position(ctx).await;

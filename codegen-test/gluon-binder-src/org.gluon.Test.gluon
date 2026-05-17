@@ -10,6 +10,8 @@ interface Test {
 
 	echo_ref(input: Ref<Test>) -> (output: Ref<Test>)
 
+	echo_untyped_ref(input: Ref) -> (output: Ref)
+
 	get_position() -> (position: types::Vec3)
 }
 
