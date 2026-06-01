@@ -726,6 +726,7 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         .map(|f| gen_field_struct(f, gen_ctx, type_is_recursive(&f.ty, &def.name, gen_ctx)));
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(struct_supported_derives(def, gen_ctx));
+    let serde_derives = derives_to_serde_tokens(struct_supported_derives(def, gen_ctx));
     let name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
@@ -795,6 +796,7 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
     quote! {
         #[doc = #doc]
         #[derive(Debug, #(#derives),*)]
+        #serde_derives
         pub struct #name {
             #(#fields)*
         }
@@ -827,6 +829,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     });
     let name = def.name.to_case(Case::Pascal);
     let derives = derives_to_tokens(enum_supported_derives(def, gen_ctx));
+    let serde_derives = derives_to_serde_tokens(enum_supported_derives(def, gen_ctx));
     let enum_name = format_ident!("{}", name);
     let doc = &def.doc;
     let gluon_trait_impl = {
@@ -954,6 +957,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
     quote! {
         #[doc = #doc]
         #[derive(Debug, #(#derives),*)]
+        #serde_derives
         pub enum #enum_name {
             #(#variants),*
         }
@@ -1143,7 +1147,8 @@ fn supported_derives_inner(
                     | Derives::EQ
                     | Derives::PARTIAL_ORD
                     | Derives::ORD
-                    | Derives::DEFAULT)
+                    | Derives::DEFAULT
+                    | Derives::SERDE)
         }
         // OwnedFd doesn't implement any derivable traits (other than Debug)
         Type::Fd => Derives::empty(),
@@ -1151,10 +1156,12 @@ fn supported_derives_inner(
         Type::Custom(custom) => custom_type_derives_inner(custom, gen_ctx, visiting),
         Type::Array(v, _) => supported_derives_inner(v, gen_ctx, visiting),
         Type::Vec(v) => supported_derives_inner(v, gen_ctx, visiting) - Derives::COPY,
-        Type::Set(v) => supported_derives_inner(v, gen_ctx, visiting),
+        Type::Set(v) => supported_derives_inner(v, gen_ctx, visiting) - Derives::COPY,
         Type::Option(v) => supported_derives_inner(v, gen_ctx, visiting),
-        // TODO: figure out correct semantics
-        Type::Result(_, _) => Derives::empty(),
+        Type::Result(ok, err) => {
+            supported_derives_inner(ok, gen_ctx, visiting)
+                & supported_derives_inner(err, gen_ctx, visiting)
+        }
         // TODO: figure out correct semantics
         Type::Map(_, _) => Derives::empty(),
     }
@@ -1290,6 +1297,24 @@ fn derives_to_tokens(derives: Derives) -> Vec<proc_macro2::Ident> {
         out.push(format_ident!("Default"));
     }
     out
+}
+
+fn derives_to_serde_tokens(derives: Derives) -> proc_macro2::TokenStream {
+    if derives.intersects(Derives::SERDE) {
+        let mut out = Vec::new();
+        if derives.contains(Derives::SERDE_SER) {
+            out.push(quote! {serde::Serialize});
+        }
+        if derives.contains(Derives::SERDE_DE) {
+            out.push(quote! {serde::Deserialize});
+        }
+        // TODO: figure out how to make this a compile error instead of a warn
+        quote! {
+            #[cfg_attr(feature="serde", derive(#(#out),*))]
+        }
+    } else {
+        quote! {}
+    }
 }
 
 #[cfg(test)]

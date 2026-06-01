@@ -411,16 +411,20 @@ bitflags::bitflags! {
         const PARTIAL_ORD = 1 << 5;
         const ORD         = 1 << 6;
         const DEFAULT     = 1 << 7;
+        const SERDE_SER   = 1 << 8;
+        const SERDE_DE    = 1 << 9;
 
+        /// All serde derives
+        const SERDE = Self::SERDE_SER.bits() | Self::SERDE_DE.bits();
         /// All standard derives that integer types support
         const INTEGERS = Self::COPY.bits() | Self::CLONE.bits() | Self::HASH.bits()
             | Self::PARTIAL_EQ.bits() | Self::EQ.bits()
             | Self::PARTIAL_ORD.bits() | Self::ORD.bits()
-            | Self::DEFAULT.bits();
+            | Self::DEFAULT.bits() | Self::SERDE_SER.bits() | Self::SERDE_DE.bits();
         /// All standard derives that float types support (no Hash, Eq, or Ord)
         const FLOATS = Self::COPY.bits() | Self::CLONE.bits()
             | Self::PARTIAL_EQ.bits() | Self::PARTIAL_ORD.bits()
-            | Self::DEFAULT.bits();
+            | Self::DEFAULT.bits() | Self::SERDE_SER.bits() | Self::SERDE_DE.bits();
     }
 }
 

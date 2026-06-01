@@ -12,7 +12,7 @@ fn main() {
             ("test", Path::new("./gluon-binder-src/org.gluon.Test.gluon")),
         ],
         &[],
-        Derives::all(),
+        Derives::all() & !Derives::SERDE,
         &[
             TypeProxy {
                 protocol_type_name: "test::TestEnum".into(),
