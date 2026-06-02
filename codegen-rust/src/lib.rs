@@ -1152,7 +1152,9 @@ fn supported_derives_inner(
         }
         // OwnedFd doesn't implement any derivable traits (other than Debug)
         Type::Fd => Derives::empty(),
-        Type::Ref(_) => requested & Derives::CLONE,
+        Type::Ref(_) => {
+            requested & Derives::CLONE & Derives::PARTIAL_EQ & Derives::EQ & Derives::HASH
+        }
         Type::Custom(custom) => custom_type_derives_inner(custom, gen_ctx, visiting),
         Type::Array(v, _) => supported_derives_inner(v, gen_ctx, visiting),
         Type::Vec(v) => supported_derives_inner(v, gen_ctx, visiting) - Derives::COPY,
