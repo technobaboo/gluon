@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 gluon.workspace = true
+tracing = "0.1.44"
 
 [build-dependencies]
 gluon-codegen.workspace = true

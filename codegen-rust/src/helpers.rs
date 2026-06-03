@@ -10,6 +10,7 @@ pub fn gen_multiple_modules(
     external_protocols: &[&ModuleExternalProtocol],
     requested_derives: Derives,
     type_proxies: &[TypeProxy],
+    tracing: bool,
     output_dir: impl AsRef<Path>,
 ) {
     let output_dir = output_dir.as_ref();
@@ -55,6 +56,7 @@ pub fn gen_multiple_modules(
             external_protocols,
             requested_derives,
             type_proxies,
+            tracing,
         );
         let str = prettyplease::unparse(&syn::parse2(module).unwrap());
         fs::write(output_dir.join(format!("{mod_name}.rs")), str).unwrap();
@@ -74,6 +76,7 @@ pub fn gen_single_module(
     mod_path: impl AsRef<Path>,
     requested_derives: Derives,
     type_proxies: &[TypeProxy],
+    tracing: bool,
     output_file_path: impl AsRef<Path>,
 ) {
     println!(
@@ -100,6 +103,7 @@ pub fn gen_single_module(
         &[],
         requested_derives,
         type_proxies,
+        tracing,
     );
 
     let str = prettyplease::unparse(&syn::parse2(module).unwrap());

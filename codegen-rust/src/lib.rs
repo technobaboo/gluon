@@ -57,6 +57,8 @@ pub struct GenCtx<'a> {
     pub requested_derives: Derives,
     /// Protocol type names mapped to their public Rust proxy types.
     pub type_proxies: &'a [TypeProxy],
+    /// Emit `tracing::trace!` calls in generated proxy methods and dispatch arms.
+    pub tracing: bool,
 }
 
 pub fn gen_module(
@@ -65,6 +67,7 @@ pub fn gen_module(
     external_protocols: &[&ModuleExternalProtocol],
     requested_derives: Derives,
     type_proxies: &[TypeProxy],
+    tracing: bool,
 ) -> proc_macro2::TokenStream {
     let gen_ctx = &GenCtx {
         curr_protocol: proto,
@@ -72,6 +75,7 @@ pub fn gen_module(
         external_protocols,
         requested_derives,
         type_proxies,
+        tracing,
     };
     let interfaces = proto
         .interfaces
@@ -384,22 +388,49 @@ pub fn gen_interface(
         let methods_dispatch = def.methods.iter().enumerate().map(|(i, method)| {
             let i = i + 8;
             let names = method.params.iter().map(|v| format_ident!("param_{}", v.name)).collect::<Vec<_>>();
-            let params = names.iter().zip(method.params.iter()).map(|(var, param)| {
+            // For proxy params, read wire value into a separate __wire_ var so it can be
+            // traced (Debug) before converting to the proxy type (unknown Debug).
+            let params_reads = names.iter().zip(method.params.iter()).map(|(var, param)| {
                 if type_has_proxy(&param.ty, gen_ctx) {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
-                    let pub_ty = gen_public_type(&param.ty, gen_ctx);
-                    let conv = gen_wire_to_pub(&param.ty, quote! { __w }, gen_ctx);
-                    quote! {
-                        let #var: #pub_ty = {
-                            let __w: #wire_ty = gluon::Convertable::read(&mut gluon_data)?;
-                            #conv
-                        };
-                    }
+                    let wire_var = format_ident!("__wire_{}", var);
+                    quote! { let #wire_var: #wire_ty = gluon::Convertable::read(&mut gluon_data)?; }
                 } else {
                     quote! { let #var = gluon::Convertable::read(&mut gluon_data)?; }
                 }
-            });
+            }).collect::<Vec<_>>();
+            let params_converts = names.iter().zip(method.params.iter()).map(|(var, param)| {
+                if type_has_proxy(&param.ty, gen_ctx) {
+                    let pub_ty = gen_public_type(&param.ty, gen_ctx);
+                    let wire_var = format_ident!("__wire_{}", var);
+                    let conv = gen_wire_to_pub(&param.ty, quote! { __w }, gen_ctx);
+                    quote! { let #var: #pub_ty = { let __w = #wire_var; #conv }; }
+                } else {
+                    quote! {}
+                }
+            }).collect::<Vec<_>>();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
+            let method_str = method.name.as_str();
+            let dispatch_trace = if gen_ctx.tracing {
+                let trace_fields = names.iter().zip(method.params.iter()).map(|(var, param)| {
+                    if type_has_proxy(&param.ty, gen_ctx) {
+                        let wire_var = format_ident!("__wire_{}", var);
+                        quote! { #var = ?#wire_var, }
+                    } else if let gluon_parser::Type::Ref(ref inner) = param.ty {
+                        let type_name = match inner {
+                            None => "ref".to_string(),
+                            Some(gluon_parser::CustomType::Named(n)) => n.clone(),
+                            Some(gluon_parser::CustomType::Qualified(ns, n)) => format!("{ns}::{n}"),
+                        };
+                        quote! { #var = #type_name, }
+                    } else {
+                        quote! { ?#var, }
+                    }
+                });
+                quote! { tracing::trace!(interface = #interface_name, method = #method_str, #(#trace_fields)* "dispatching"); }
+            } else {
+                quote! {}
+            };
             let return_names = method.returns.as_ref().map(|v| {
                 v.iter()
                     .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
@@ -419,13 +450,30 @@ pub fn gen_interface(
                         quote! { #ret_name.write_owned(&mut gluon_out)?; }
                     }
                 }).collect::<Vec<_>>();
+                let dispatch_return_trace = if gen_ctx.tracing {
+                    let ret_defs = method.returns.as_ref().unwrap();
+                    let trace_fields = return_names.iter().zip(ret_defs.iter()).map(|(ret_name, ret_def)| {
+                        if type_has_proxy(&ret_def.ty, gen_ctx) {
+                            let type_name = gen_public_type(&ret_def.ty, gen_ctx).to_string().replace(' ', "");
+                            quote! { #ret_name = #type_name, }
+                        } else {
+                            quote! { ?#ret_name, }
+                        }
+                    });
+                    quote! { tracing::trace!(interface = #interface_name, method = #method_str, #(#trace_fields)* "←"); }
+                } else {
+                    quote! {}
+                };
                 quote! {
                     #i => {
                         let return_callback = gluon_data.read_binder()?;
                         let mut gluon_out = gluon::DataBuilder::new();
-                        #(#params)*
+                        #(#params_reads)*
+                        #dispatch_trace
+                        #(#params_converts)*
                         let (#(#return_names),*) = self.#name(ctx, #(#names),*).await;
                         drop(gluon_data);
+                        #dispatch_return_trace
                         #(#return_writes)*
                         return_callback.device().transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
                     },
@@ -433,7 +481,9 @@ pub fn gen_interface(
             } else {
                 quote! {
                     #i => {
-                        #(#params)*
+                        #(#params_reads)*
+                        #dispatch_trace
+                        #(#params_converts)*
                         drop(gluon_data);
                         self.#name(ctx, #(#names),*).await;
                     },
@@ -490,36 +540,56 @@ pub fn gen_interface(
         let methods = def.methods.iter().enumerate().map(|(i, method)| {
             // Params: proxy/nested-proxy types taken directly; untyped refs take &impl OwnedObjectRef;
             // all others use impl Into<WireType>.
-            let params = method.params.iter().map(|param| {
-                let name = format_ident!("{}", param.name.to_case(Case::Snake));
+            let param_names: Vec<proc_macro2::Ident> = method.params.iter()
+                .map(|p| format_ident!("{}", p.name.to_case(Case::Snake)))
+                .collect();
+            let params = method.params.iter().zip(param_names.iter()).map(|(param, pname)| {
                 if type_has_proxy(&param.ty, gen_ctx) {
                     let pub_ty = gen_public_type(&param.ty, gen_ctx);
-                    quote! { #name: #pub_ty }
+                    quote! { #pname: #pub_ty }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { #name: &impl gluon::ToObjectOrRef }
+                    quote! { #pname: &impl gluon::ToObjectOrRef }
                 } else {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
-                    quote! { #name: impl Into<#wire_ty> }
+                    quote! { #pname: impl Into<#wire_ty> }
                 }
             }).collect::<Vec<_>>();
             // Convert every param to its wire type before writing.
-            let params_convert = method.params.iter().map(|param| {
+            let params_convert = method.params.iter().zip(param_names.iter()).map(|(param, pname)| {
                 let wire_ty = gen_type(&param.ty, gen_ctx);
-                let name = format_ident!("{}", param.name.to_case(Case::Snake));
                 if type_has_proxy(&param.ty, gen_ctx) {
-                    let conv = gen_pub_to_wire(&param.ty, quote! { #name }, gen_ctx);
-                    quote! { let #name: #wire_ty = #conv; }
+                    let conv = gen_pub_to_wire(&param.ty, quote! { #pname }, gen_ctx);
+                    quote! { let #pname: #wire_ty = #conv; }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { let #name: #wire_ty = gluon::ToObjectOrRef::to_binder_object_or_ref(#name); }
+                    quote! { let #pname: #wire_ty = gluon::ToObjectOrRef::to_binder_object_or_ref(#pname); }
                 } else {
-                    quote! { let #name: #wire_ty = #name.into(); }
+                    quote! { let #pname: #wire_ty = #pname.into(); }
                 }
             }).collect::<Vec<_>>();
-            let params_write = method.params.iter().map(|param| {
-                let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! { #name.write(&mut gluon_builder)?; }
+            let params_write = param_names.iter().map(|pname| {
+                quote! { #pname.write(&mut gluon_builder)?; }
             }).collect::<Vec<_>>();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
+            let method_str = method.name.as_str();
+            let proxy_trace = if gen_ctx.tracing {
+                // After params_convert all non-Ref params are concrete wire types (Debug).
+                // Ref params become gluon::ObjectOrRef — name the type instead.
+                let trace_fields = method.params.iter().zip(param_names.iter()).map(|(param, pname)| {
+                    if let gluon_parser::Type::Ref(ref inner) = param.ty {
+                        let type_name = match inner {
+                            None => "ref".to_string(),
+                            Some(gluon_parser::CustomType::Named(n)) => n.clone(),
+                            Some(gluon_parser::CustomType::Qualified(ns, n)) => format!("{ns}::{n}"),
+                        };
+                        quote! { #pname = #type_name, }
+                    } else {
+                        quote! { ?#pname, }
+                    }
+                });
+                quote! { tracing::trace!(interface = #interface_name, method = #method_str, #(#trace_fields)* "→"); }
+            } else {
+                quote! {}
+            };
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
             // Return types: public (proxy) types in the signature.
             let pub_return_types = method.returns.as_ref().map(|v| {
@@ -534,26 +604,43 @@ pub fn gen_interface(
                         [ty] => quote! {#ty},
                         types => quote! {(#(#types),*)},
                     };
-                    // Read each return from wire, converting to public type when needed.
-                    let return_reads: Vec<proc_macro2::TokenStream> = ret_defs.iter().map(|ret_def| {
+                    // Name each return value so we can trace per-value before returning.
+                    let ret_vars: Vec<proc_macro2::Ident> = ret_defs.iter()
+                        .map(|r| format_ident!("__ret_{}", r.name.to_case(Case::Snake)))
+                        .collect();
+                    let ret_let_stmts = ret_vars.iter().zip(ret_defs.iter()).map(|(var, ret_def)| {
                         let base = quote! { gluon::Convertable::read(&mut reader)? };
                         if type_has_proxy(&ret_def.ty, gen_ctx) {
                             let wire_ty = gen_type(&ret_def.ty, gen_ctx);
                             let conv = gen_wire_to_pub(&ret_def.ty, quote! { __w }, gen_ctx);
-                            quote! { { let __w: #wire_ty = #base; #conv } }
+                            quote! { let #var = { let __w: #wire_ty = #base; #conv }; }
                         } else {
-                            base
+                            quote! { let #var = #base; }
                         }
-                    }).collect();
-                    let return_tuple = match return_reads.as_slice() {
+                    }).collect::<Vec<_>>();
+                    let return_result = match ret_vars.as_slice() {
                         [] => quote! {()},
-                        [single] => single.clone(),
-                        reads => quote! {(#(#reads),*)},
+                        [single] => quote! {#single},
+                        vars => quote! {(#(#vars),*)},
+                    };
+                    let proxy_return_trace = if gen_ctx.tracing {
+                        let trace_fields = ret_vars.iter().zip(ret_defs.iter()).map(|(var, ret_def)| {
+                            if type_has_proxy(&ret_def.ty, gen_ctx) {
+                                let type_name = gen_public_type(&ret_def.ty, gen_ctx).to_string().replace(' ', "");
+                                quote! { #var = #type_name, }
+                            } else {
+                                quote! { ?#var, }
+                            }
+                        });
+                        quote! { tracing::trace!(interface = #interface_name, method = #method_str, #(#trace_fields)* "←"); }
+                    } else {
+                        quote! {}
                     };
                     quote! {
                         #doc_comment
                         pub async fn #name(&self, #(#params),*) -> Result<#fn_return, gluon::SendError> {
                             #(#params_convert)*
+                            #proxy_trace
                             let mut gluon_builder = gluon::DataBuilder::new();
                             let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
                             let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -563,7 +650,9 @@ pub fn gen_interface(
                             // safe since we're also holding the channel sender
                             let transaction = gluon_recv.recv().await.unwrap();
                             let mut reader = gluon::DataReader::from_payload(transaction.payload);
-                            Ok(#return_tuple)
+                            #(#ret_let_stmts)*
+                            #proxy_return_trace
+                            Ok(#return_result)
                         }
                     }
                 }
@@ -571,6 +660,7 @@ pub fn gen_interface(
                     #doc_comment
                     pub fn #name(&self, #(#params),*) -> Result<(), gluon::SendError> {
                         #(#params_convert)*
+                        #proxy_trace
                         let mut gluon_builder = gluon::DataBuilder::new();
                         #(#params_write)*
                         self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
@@ -1355,6 +1445,7 @@ mod tests {
             external_protocols: &[],
             requested_derives: derives,
             type_proxies: &[],
+            tracing: false,
         };
         let def = &local
             .protocol
@@ -1397,6 +1488,7 @@ mod tests {
             external_protocols: &[],
             requested_derives: derives,
             type_proxies: &[],
+            tracing: false,
         };
         let def = &local
             .protocol
@@ -1444,6 +1536,7 @@ mod tests {
             external_protocols: &[],
             requested_derives: derives,
             type_proxies: &[],
+            tracing: false,
         };
 
         let expr_def = &local
@@ -1496,6 +1589,7 @@ mod tests {
             external_protocols: &[],
             requested_derives: derives,
             type_proxies: &[],
+            tracing: false,
         };
         let def = &local
             .protocol
@@ -1532,6 +1626,7 @@ mod tests {
             external_protocols: &[],
             requested_derives: derives,
             type_proxies: &[],
+            tracing: false,
         };
         let def = &local
             .protocol

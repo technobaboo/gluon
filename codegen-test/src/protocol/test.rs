@@ -191,11 +191,13 @@ impl gluon::Convertable for Test {
 }
 impl Test {
     pub fn quit(&self) -> Result<(), gluon::SendError> {
+        tracing::trace!(interface = "Test", method = "quit", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         self.obj.device().transact_one_way(&self.obj, 8u32, gluon_builder.to_payload())?;
         Ok(())
     }
     pub async fn ping(&self) -> Result<(), gluon::SendError> {
+        tracing::trace!(interface = "Test", method = "ping", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -203,6 +205,7 @@ impl Test {
         self.obj.device().transact_one_way(&self.obj, 9u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
+        tracing::trace!(interface = "Test", method = "ping", "←");
         Ok(())
     }
     pub async fn echo(
@@ -210,6 +213,7 @@ impl Test {
         input: crate::MyTestEnum,
     ) -> Result<crate::MyTestEnum, gluon::SendError> {
         let input: proxied::TestEnum = input.into();
+        tracing::trace!(interface = "Test", method = "echo", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -220,16 +224,22 @@ impl Test {
             .transact_one_way(&self.obj, 10u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
-        Ok({
+        let __ret_output = {
             let __w: proxied::TestEnum = gluon::Convertable::read(&mut reader)?;
             __w.into()
-        })
+        };
+        tracing::trace!(
+            interface = "Test", method = "echo", __ret_output = "crate::MyTestEnum",
+            "←"
+        );
+        Ok(__ret_output)
     }
     pub async fn echo_ref(
         &self,
         input: impl Into<Test>,
     ) -> Result<Test, gluon::SendError> {
         let input: Test = input.into();
+        tracing::trace!(interface = "Test", method = "echo_ref", input = "Test", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -240,7 +250,9 @@ impl Test {
             .transact_one_way(&self.obj, 11u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
-        Ok(gluon::Convertable::read(&mut reader)?)
+        let __ret_output = gluon::Convertable::read(&mut reader)?;
+        tracing::trace!(interface = "Test", method = "echo_ref", ? __ret_output, "←");
+        Ok(__ret_output)
     }
     pub async fn echo_untyped_ref(
         &self,
@@ -248,6 +260,9 @@ impl Test {
     ) -> Result<gluon::ObjectOrRef, gluon::SendError> {
         let input: gluon::ObjectOrRef = gluon::ToObjectOrRef::to_binder_object_or_ref(
             input,
+        );
+        tracing::trace!(
+            interface = "Test", method = "echo_untyped_ref", input = "ref", "→"
         );
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
@@ -259,9 +274,14 @@ impl Test {
             .transact_one_way(&self.obj, 12u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
-        Ok(gluon::Convertable::read(&mut reader)?)
+        let __ret_output = gluon::Convertable::read(&mut reader)?;
+        tracing::trace!(
+            interface = "Test", method = "echo_untyped_ref", ? __ret_output, "←"
+        );
+        Ok(__ret_output)
     }
     pub async fn get_position(&self) -> Result<crate::MyVec3, gluon::SendError> {
+        tracing::trace!(interface = "Test", method = "get_position", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -271,12 +291,17 @@ impl Test {
             .transact_one_way(&self.obj, 13u32, gluon_builder.to_payload())?;
         let transaction = gluon_recv.recv().await.unwrap();
         let mut reader = gluon::DataReader::from_payload(transaction.payload);
-        Ok({
+        let __ret_position = {
             let __w: super::types::proxied::Vec3 = gluon::Convertable::read(
                 &mut reader,
             )?;
             __w.into()
-        })
+        };
+        tracing::trace!(
+            interface = "Test", method = "get_position", __ret_position =
+            "crate::MyVec3", "←"
+        );
+        Ok(__ret_position)
     }
     pub fn from_handler<H: TestHandler>(obj: &impl gluon::OwnedObjectRef<H>) -> Test {
         Test::from_object_or_ref(gluon::OwnedObjectRef::to_object_or_ref(obj))
@@ -338,14 +363,17 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
         async move {
             match transaction_code {
                 8u32 => {
+                    tracing::trace!(interface = "Test", method = "quit", "dispatching");
                     drop(gluon_data);
                     self.quit(ctx).await;
                 }
                 9u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
+                    tracing::trace!(interface = "Test", method = "ping", "dispatching");
                     let () = self.ping(ctx).await;
                     drop(gluon_data);
+                    tracing::trace!(interface = "Test", method = "ping", "←");
                     return_callback
                         .device()
                         .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
@@ -353,14 +381,23 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                 10u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
+                    let __wire_param_input: proxied::TestEnum = gluon::Convertable::read(
+                        &mut gluon_data,
+                    )?;
+                    tracing::trace!(
+                        interface = "Test", method = "echo", param_input = ?
+                        __wire_param_input, "dispatching"
+                    );
                     let param_input: crate::MyTestEnum = {
-                        let __w: proxied::TestEnum = gluon::Convertable::read(
-                            &mut gluon_data,
-                        )?;
+                        let __w = __wire_param_input;
                         __w.into()
                     };
                     let (output) = self.echo(ctx, param_input).await;
                     drop(gluon_data);
+                    tracing::trace!(
+                        interface = "Test", method = "echo", output =
+                        "crate::MyTestEnum", "←"
+                    );
                     let __w: proxied::TestEnum = output.into();
                     __w.write_owned(&mut gluon_out)?;
                     return_callback
@@ -371,8 +408,15 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
+                    tracing::trace!(
+                        interface = "Test", method = "echo_ref", param_input = "Test",
+                        "dispatching"
+                    );
                     let (output) = self.echo_ref(ctx, param_input).await;
                     drop(gluon_data);
+                    tracing::trace!(
+                        interface = "Test", method = "echo_ref", ? output, "←"
+                    );
                     output.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
@@ -382,8 +426,15 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
+                    tracing::trace!(
+                        interface = "Test", method = "echo_untyped_ref", param_input =
+                        "ref", "dispatching"
+                    );
                     let (output) = self.echo_untyped_ref(ctx, param_input).await;
                     drop(gluon_data);
+                    tracing::trace!(
+                        interface = "Test", method = "echo_untyped_ref", ? output, "←"
+                    );
                     output.write_owned(&mut gluon_out)?;
                     return_callback
                         .device()
@@ -392,8 +443,15 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                 13u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
+                    tracing::trace!(
+                        interface = "Test", method = "get_position", "dispatching"
+                    );
                     let (position) = self.get_position(ctx).await;
                     drop(gluon_data);
+                    tracing::trace!(
+                        interface = "Test", method = "get_position", position =
+                        "crate::MyVec3", "←"
+                    );
                     let __w: super::types::proxied::Vec3 = position.into();
                     __w.write_owned(&mut gluon_out)?;
                     return_callback

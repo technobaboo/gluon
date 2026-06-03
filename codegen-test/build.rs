@@ -34,6 +34,7 @@ fn main() {
                 derives: Derives::COPY | Derives::CLONE | Derives::PARTIAL_EQ,
             },
         ],
+        true,
         "./src/protocol",
     );
 }
