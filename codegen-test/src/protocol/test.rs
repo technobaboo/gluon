@@ -239,7 +239,7 @@ impl Test {
         input: impl Into<Test>,
     ) -> Result<Test, gluon::SendError> {
         let input: Test = input.into();
-        tracing::trace!(interface = "Test", method = "echo_ref", input = "Test", "→");
+        tracing::trace!(interface = "Test", method = "echo_ref", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -261,9 +261,7 @@ impl Test {
         let input: gluon::ObjectOrRef = gluon::ToObjectOrRef::to_binder_object_or_ref(
             input,
         );
-        tracing::trace!(
-            interface = "Test", method = "echo_untyped_ref", input = "ref", "→"
-        );
+        tracing::trace!(interface = "Test", method = "echo_untyped_ref", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
         let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
@@ -409,7 +407,7 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                     let mut gluon_out = gluon::DataBuilder::new();
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
                     tracing::trace!(
-                        interface = "Test", method = "echo_ref", param_input = "Test",
+                        interface = "Test", method = "echo_ref", ? param_input,
                         "dispatching"
                     );
                     let (output) = self.echo_ref(ctx, param_input).await;
@@ -427,8 +425,8 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                     let mut gluon_out = gluon::DataBuilder::new();
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
                     tracing::trace!(
-                        interface = "Test", method = "echo_untyped_ref", param_input =
-                        "ref", "dispatching"
+                        interface = "Test", method = "echo_untyped_ref", ? param_input,
+                        "dispatching"
                     );
                     let (output) = self.echo_untyped_ref(ctx, param_input).await;
                     drop(gluon_data);

@@ -416,13 +416,6 @@ pub fn gen_interface(
                     if type_has_proxy(&param.ty, gen_ctx) {
                         let wire_var = format_ident!("__wire_{}", var);
                         quote! { #var = ?#wire_var, }
-                    } else if let gluon_parser::Type::Ref(ref inner) = param.ty {
-                        let type_name = match inner {
-                            None => "ref".to_string(),
-                            Some(gluon_parser::CustomType::Named(n)) => n.clone(),
-                            Some(gluon_parser::CustomType::Qualified(ns, n)) => format!("{ns}::{n}"),
-                        };
-                        quote! { #var = #type_name, }
                     } else {
                         quote! { ?#var, }
                     }
@@ -572,20 +565,7 @@ pub fn gen_interface(
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let method_str = method.name.as_str();
             let proxy_trace = if gen_ctx.tracing {
-                // After params_convert all non-Ref params are concrete wire types (Debug).
-                // Ref params become gluon::ObjectOrRef — name the type instead.
-                let trace_fields = method.params.iter().zip(param_names.iter()).map(|(param, pname)| {
-                    if let gluon_parser::Type::Ref(ref inner) = param.ty {
-                        let type_name = match inner {
-                            None => "ref".to_string(),
-                            Some(gluon_parser::CustomType::Named(n)) => n.clone(),
-                            Some(gluon_parser::CustomType::Qualified(ns, n)) => format!("{ns}::{n}"),
-                        };
-                        quote! { #pname = #type_name, }
-                    } else {
-                        quote! { ?#pname, }
-                    }
-                });
+                let trace_fields = param_names.iter().map(|pname| quote! { ?#pname, });
                 quote! { tracing::trace!(interface = #interface_name, method = #method_str, #(#trace_fields)* "→"); }
             } else {
                 quote! {}
