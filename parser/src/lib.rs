@@ -116,9 +116,21 @@ impl std::fmt::Debug for ParseError {
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let color = std::io::stderr().is_terminal();
-        let red = if color { Color::Red.bold() } else { Style::new() };
-        let blue = if color { Color::Blue.bold() } else { Style::new() };
-        let white_bold = if color { Style::new().bold() } else { Style::new() };
+        let red = if color {
+            Color::Red.bold()
+        } else {
+            Style::new()
+        };
+        let blue = if color {
+            Color::Blue.bold()
+        } else {
+            Style::new()
+        };
+        let white_bold = if color {
+            Style::new().bold()
+        } else {
+            Style::new()
+        };
         let pipe = blue.paint("|");
 
         for (i, entry) in self.errors.iter().enumerate() {

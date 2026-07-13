@@ -1,5 +1,6 @@
 #![allow(unused, clippy::all, private_bounds, private_interfaces)]
-use gluon::Convertable;
+use gluon::Convertable as _;
+use tracing::Instrument as _;
 pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
     protocol_name: "org.gluon.Test",
     types: &[
@@ -363,13 +364,28 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                 8u32 => {
                     tracing::trace!(interface = "Test", method = "quit", "dispatching");
                     drop(gluon_data);
-                    self.quit(ctx).await;
+                    self.quit(ctx)
+                        .instrument(
+                            tracing::trace_span!(
+                                "dispatching", interface = "Test", method = "quit",
+                                method_id = 8u32
+                            ),
+                        )
+                        .await;
                 }
                 9u32 => {
                     let return_callback = gluon_data.read_binder()?;
                     let mut gluon_out = gluon::DataBuilder::new();
                     tracing::trace!(interface = "Test", method = "ping", "dispatching");
-                    let () = self.ping(ctx).await;
+                    let () = self
+                        .ping(ctx)
+                        .instrument(
+                            tracing::trace_span!(
+                                "dispatching", interface = "Test", method = "ping",
+                                method_id = 9u32
+                            ),
+                        )
+                        .await;
                     drop(gluon_data);
                     tracing::trace!(interface = "Test", method = "ping", "←");
                     return_callback
@@ -390,7 +406,15 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         let __w = __wire_param_input;
                         __w.into()
                     };
-                    let (output) = self.echo(ctx, param_input).await;
+                    let (output) = self
+                        .echo(ctx, param_input)
+                        .instrument(
+                            tracing::trace_span!(
+                                "dispatching", interface = "Test", method = "echo",
+                                method_id = 10u32
+                            ),
+                        )
+                        .await;
                     drop(gluon_data);
                     tracing::trace!(
                         interface = "Test", method = "echo", output =
@@ -410,7 +434,15 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         interface = "Test", method = "echo_ref", ? param_input,
                         "dispatching"
                     );
-                    let (output) = self.echo_ref(ctx, param_input).await;
+                    let (output) = self
+                        .echo_ref(ctx, param_input)
+                        .instrument(
+                            tracing::trace_span!(
+                                "dispatching", interface = "Test", method = "echo_ref",
+                                method_id = 11u32
+                            ),
+                        )
+                        .await;
                     drop(gluon_data);
                     tracing::trace!(
                         interface = "Test", method = "echo_ref", ? output, "←"
@@ -428,7 +460,15 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         interface = "Test", method = "echo_untyped_ref", ? param_input,
                         "dispatching"
                     );
-                    let (output) = self.echo_untyped_ref(ctx, param_input).await;
+                    let (output) = self
+                        .echo_untyped_ref(ctx, param_input)
+                        .instrument(
+                            tracing::trace_span!(
+                                "dispatching", interface = "Test", method =
+                                "echo_untyped_ref", method_id = 12u32
+                            ),
+                        )
+                        .await;
                     drop(gluon_data);
                     tracing::trace!(
                         interface = "Test", method = "echo_untyped_ref", ? output, "←"
@@ -444,7 +484,15 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                     tracing::trace!(
                         interface = "Test", method = "get_position", "dispatching"
                     );
-                    let (position) = self.get_position(ctx).await;
+                    let (position) = self
+                        .get_position(ctx)
+                        .instrument(
+                            tracing::trace_span!(
+                                "dispatching", interface = "Test", method = "get_position",
+                                method_id = 13u32
+                            ),
+                        )
+                        .await;
                     drop(gluon_data);
                     tracing::trace!(
                         interface = "Test", method = "get_position", position =

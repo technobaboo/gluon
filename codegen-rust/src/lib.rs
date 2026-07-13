@@ -102,9 +102,15 @@ pub fn gen_module(
         .filter(|(name, _)| find_proxy_by_name(name, gen_ctx).is_some())
         .map(|(_name, def)| gen_enum(def, gen_ctx));
     let external_proto_const = gen_external_protocol_def(gen_ctx);
+    let tracing_instrument = if gen_ctx.tracing {
+        quote! { use tracing::Instrument as _; }
+    } else {
+        quote! {}
+    };
     quote! {
         #![allow(unused, clippy::all, private_bounds, private_interfaces)]
-        use gluon::Convertable;
+        use gluon::Convertable as _;
+        #tracing_instrument
         #external_proto_const
         #(#structs)*
         #(#enums)*
@@ -430,6 +436,11 @@ pub fn gen_interface(
                     .collect::<Vec<_>>()
             });
             let i = i as u32;
+            let tracing_span_instrument = if gen_ctx.tracing {
+                quote! { .instrument(tracing::trace_span!("dispatching", interface = #interface_name, method = #method_str, method_id = #i)) }
+            } else {
+                quote! {}
+            };
             if let Some(ref return_names) = return_names {
                 let return_writes = return_names.iter().zip(method.returns.as_ref().unwrap().iter()).map(|(ret_name, ret_def)| {
                     if type_has_proxy(&ret_def.ty, gen_ctx) {
@@ -464,7 +475,7 @@ pub fn gen_interface(
                         #(#params_reads)*
                         #dispatch_trace
                         #(#params_converts)*
-                        let (#(#return_names),*) = self.#name(ctx, #(#names),*).await;
+                        let (#(#return_names),*) = self.#name(ctx, #(#names),*)#tracing_span_instrument.await;
                         drop(gluon_data);
                         #dispatch_return_trace
                         #(#return_writes)*
@@ -478,7 +489,7 @@ pub fn gen_interface(
                         #dispatch_trace
                         #(#params_converts)*
                         drop(gluon_data);
-                        self.#name(ctx, #(#names),*).await;
+                        self.#name(ctx, #(#names),*)#tracing_span_instrument.await;
                     },
                 }
             }
