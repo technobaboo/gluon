@@ -442,21 +442,38 @@ pub fn gen_interface(
                 quote! {}
             };
             if let Some(ref return_names) = return_names {
-                let return_writes = return_names.iter().zip(method.returns.as_ref().unwrap().iter()).map(|(ret_name, ret_def)| {
+                let return_defs = method.returns.as_ref().unwrap();
+                let oneway_name = format_ident!("{}_oneway", name);
+                let return_pub_type = {
+                    let types = return_defs.iter().map(|v| gen_public_type(&v.ty, gen_ctx)).collect::<Vec<_>>();
+                    match types.as_slice() {
+                        [] => quote! {()},
+                        [ty] => quote! {#ty},
+                        types => quote! {(#(#types),*)},
+                    }
+                };
+                let return_pattern = match return_names.as_slice() {
+                    [] => quote! {()},
+                    [single] => quote! {#single},
+                    names => quote! {(#(#names),*)},
+                };
+                // Conversion + wire-writing logic for the reply value, handed to `ReplySender`
+                // as a plain (non-capturing) fn so `reply.send(value)` can do the pub->wire
+                // conversion generically without the caller ever touching a `DataBuilder`.
+                let return_writes = return_names.iter().zip(return_defs.iter()).map(|(ret_name, ret_def)| {
                     if type_has_proxy(&ret_def.ty, gen_ctx) {
                         let wire_ty = gen_type(&ret_def.ty, gen_ctx);
                         let conv = gen_pub_to_wire(&ret_def.ty, quote! { #ret_name }, gen_ctx);
                         quote! {
                             let __w: #wire_ty = #conv;
-                            __w.write_owned(&mut gluon_out)?;
+                            __w.write_owned(gluon_out)?;
                         }
                     } else {
-                        quote! { #ret_name.write_owned(&mut gluon_out)?; }
+                        quote! { #ret_name.write_owned(gluon_out)?; }
                     }
                 }).collect::<Vec<_>>();
                 let dispatch_return_trace = if gen_ctx.tracing {
-                    let ret_defs = method.returns.as_ref().unwrap();
-                    let trace_fields = return_names.iter().zip(ret_defs.iter()).map(|(ret_name, ret_def)| {
+                    let trace_fields = return_names.iter().zip(return_defs.iter()).map(|(ret_name, ret_def)| {
                         if type_has_proxy(&ret_def.ty, gen_ctx) {
                             let type_name = gen_public_type(&ret_def.ty, gen_ctx).to_string().replace(' ', "");
                             quote! { #ret_name = #type_name, }
@@ -471,15 +488,19 @@ pub fn gen_interface(
                 quote! {
                     #i => {
                         let return_callback = gluon_data.read_binder()?;
-                        let mut gluon_out = gluon::DataBuilder::new();
                         #(#params_reads)*
                         #dispatch_trace
                         #(#params_converts)*
-                        let (#(#return_names),*) = self.#name(ctx, #(#names),*)#tracing_span_instrument.await;
                         drop(gluon_data);
-                        #dispatch_return_trace
-                        #(#return_writes)*
-                        return_callback.device().transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                        let reply: gluon::ReplySender<#return_pub_type> = gluon::ReplySender::new(
+                            return_callback,
+                            |#return_pattern, gluon_out| {
+                                #dispatch_return_trace
+                                #(#return_writes)*
+                                Ok(())
+                            },
+                        );
+                        self.#oneway_name(ctx, #(#names,)* reply)#tracing_span_instrument.await?;
                     },
                 }
             } else {
@@ -496,11 +517,13 @@ pub fn gen_interface(
         });
         // Handler trait: public-facing signatures use proxy types where registered.
         let methods = def.methods.iter().map(|method| {
-            let params = method.params.iter().map(|param| {
+            let param_names: Vec<proc_macro2::Ident> = method.params.iter()
+                .map(|p| format_ident!("{}", p.name.to_case(Case::Snake)))
+                .collect();
+            let params: Vec<proc_macro2::TokenStream> = method.params.iter().zip(param_names.iter()).map(|(param, pname)| {
                 let type_def = gen_public_type(&param.ty, gen_ctx);
-                let name = format_ident!("{}", param.name.to_case(Case::Snake));
-                quote! { #name: #type_def }
-            });
+                quote! { #pname: #type_def }
+            }).collect();
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
             let doc_comment = method.doc.as_ref().map(|str| quote! {#[doc = #str]});
             let return_types = method.returns.as_ref().map(|v| {
@@ -519,9 +542,56 @@ pub fn gen_interface(
                     quote! { -> impl Future<Output=#types> + Send + Sync }
                 }
             };
+            // For methods with a return value, generate a default `_oneway` method:
+            // it awaits the real method and sends the result through a `ReplySender`,
+            // so an override can instead stash `reply` and return immediately without
+            // holding up dispatch of the next transaction.
+            let oneway_method = if let Some(ref return_defs) = method.returns {
+                let oneway_name = format_ident!("{}_oneway", name);
+                let return_pub_type = match return_types.as_deref().unwrap() {
+                    [] => quote! {()},
+                    [ty] => quote! {#ty},
+                    types => quote! {(#(#types),*)},
+                };
+                let return_names: Vec<proc_macro2::Ident> = return_defs.iter()
+                    .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
+                    .collect();
+                let return_pattern = match return_names.as_slice() {
+                    [] => quote! {()},
+                    [single] => quote! {#single},
+                    names => quote! {(#(#names),*)},
+                };
+                let oneway_doc_comment = {
+                    let msg = format!(
+                        "Dispatched instead of [`Self::{name}`] so a slow reply doesn't hold up dispatch of the next transaction. \
+                         The default implementation just awaits `{name}` and sends the result through `reply`. \
+                         Override this method instead of `{name}` to defer the reply: stash `reply` (it's `Send + Sync + 'static`) \
+                         somewhere else — a channel, a queue, another task — and return as soon as this method's future is done, \
+                         without waiting for the reply to actually be sent."
+                    );
+                    quote! { #[doc = #msg] }
+                };
+                quote! {
+                    #oneway_doc_comment
+                    fn #oneway_name(
+                        &self,
+                        _ctx: gluon::Context,
+                        #(#params,)*
+                        reply: gluon::ReplySender<#return_pub_type>,
+                    ) -> impl Future<Output = Result<(), gluon::SendError>> + Send + Sync {
+                        async move {
+                            let #return_pattern = self.#name(_ctx, #(#param_names),*).await;
+                            reply.send(#return_pattern)
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            };
             quote! {
                 #doc_comment
                 fn #name(&self, _ctx: gluon::Context, #(#params),*) #fn_return;
+                #oneway_method
             }
         });
         quote! {

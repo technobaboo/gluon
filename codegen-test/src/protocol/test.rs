@@ -334,25 +334,83 @@ impl Eq for Test {}
 pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
     fn quit(&self, _ctx: gluon::Context) -> impl Future<Output = ()> + Send + Sync;
     fn ping(&self, _ctx: gluon::Context) -> impl Future<Output = ()> + Send + Sync;
+    ///Dispatched instead of [`Self::ping`] so a slow reply doesn't hold up dispatch of the next transaction. The default implementation just awaits `ping` and sends the result through `reply`. Override this method instead of `ping` to defer the reply: stash `reply` (it's `Send + Sync + 'static`) somewhere else — a channel, a queue, another task — and return as soon as this method's future is done, without waiting for the reply to actually be sent.
+    fn ping_oneway(
+        &self,
+        _ctx: gluon::Context,
+        reply: gluon::ReplySender<()>,
+    ) -> impl Future<Output = Result<(), gluon::SendError>> + Send + Sync {
+        async move {
+            let () = self.ping(_ctx).await;
+            reply.send(())
+        }
+    }
     fn echo(
         &self,
         _ctx: gluon::Context,
         input: crate::MyTestEnum,
     ) -> impl Future<Output = crate::MyTestEnum> + Send + Sync;
+    ///Dispatched instead of [`Self::echo`] so a slow reply doesn't hold up dispatch of the next transaction. The default implementation just awaits `echo` and sends the result through `reply`. Override this method instead of `echo` to defer the reply: stash `reply` (it's `Send + Sync + 'static`) somewhere else — a channel, a queue, another task — and return as soon as this method's future is done, without waiting for the reply to actually be sent.
+    fn echo_oneway(
+        &self,
+        _ctx: gluon::Context,
+        input: crate::MyTestEnum,
+        reply: gluon::ReplySender<crate::MyTestEnum>,
+    ) -> impl Future<Output = Result<(), gluon::SendError>> + Send + Sync {
+        async move {
+            let output = self.echo(_ctx, input).await;
+            reply.send(output)
+        }
+    }
     fn echo_ref(
         &self,
         _ctx: gluon::Context,
         input: Test,
     ) -> impl Future<Output = Test> + Send + Sync;
+    ///Dispatched instead of [`Self::echo_ref`] so a slow reply doesn't hold up dispatch of the next transaction. The default implementation just awaits `echo_ref` and sends the result through `reply`. Override this method instead of `echo_ref` to defer the reply: stash `reply` (it's `Send + Sync + 'static`) somewhere else — a channel, a queue, another task — and return as soon as this method's future is done, without waiting for the reply to actually be sent.
+    fn echo_ref_oneway(
+        &self,
+        _ctx: gluon::Context,
+        input: Test,
+        reply: gluon::ReplySender<Test>,
+    ) -> impl Future<Output = Result<(), gluon::SendError>> + Send + Sync {
+        async move {
+            let output = self.echo_ref(_ctx, input).await;
+            reply.send(output)
+        }
+    }
     fn echo_untyped_ref(
         &self,
         _ctx: gluon::Context,
         input: gluon::ObjectOrRef,
     ) -> impl Future<Output = gluon::ObjectOrRef> + Send + Sync;
+    ///Dispatched instead of [`Self::echo_untyped_ref`] so a slow reply doesn't hold up dispatch of the next transaction. The default implementation just awaits `echo_untyped_ref` and sends the result through `reply`. Override this method instead of `echo_untyped_ref` to defer the reply: stash `reply` (it's `Send + Sync + 'static`) somewhere else — a channel, a queue, another task — and return as soon as this method's future is done, without waiting for the reply to actually be sent.
+    fn echo_untyped_ref_oneway(
+        &self,
+        _ctx: gluon::Context,
+        input: gluon::ObjectOrRef,
+        reply: gluon::ReplySender<gluon::ObjectOrRef>,
+    ) -> impl Future<Output = Result<(), gluon::SendError>> + Send + Sync {
+        async move {
+            let output = self.echo_untyped_ref(_ctx, input).await;
+            reply.send(output)
+        }
+    }
     fn get_position(
         &self,
         _ctx: gluon::Context,
     ) -> impl Future<Output = crate::MyVec3> + Send + Sync;
+    ///Dispatched instead of [`Self::get_position`] so a slow reply doesn't hold up dispatch of the next transaction. The default implementation just awaits `get_position` and sends the result through `reply`. Override this method instead of `get_position` to defer the reply: stash `reply` (it's `Send + Sync + 'static`) somewhere else — a channel, a queue, another task — and return as soon as this method's future is done, without waiting for the reply to actually be sent.
+    fn get_position_oneway(
+        &self,
+        _ctx: gluon::Context,
+        reply: gluon::ReplySender<crate::MyVec3>,
+    ) -> impl Future<Output = Result<(), gluon::SendError>> + Send + Sync {
+        async move {
+            let position = self.get_position(_ctx).await;
+            reply.send(position)
+        }
+    }
     fn dispatch_one_way(
         &self,
         transaction_code: u32,
@@ -375,26 +433,26 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                 }
                 9u32 => {
                     let return_callback = gluon_data.read_binder()?;
-                    let mut gluon_out = gluon::DataBuilder::new();
                     tracing::trace!(interface = "Test", method = "ping", "dispatching");
-                    let () = self
-                        .ping(ctx)
+                    drop(gluon_data);
+                    let reply: gluon::ReplySender<()> = gluon::ReplySender::new(
+                        return_callback,
+                        |(), gluon_out| {
+                            tracing::trace!(interface = "Test", method = "ping", "←");
+                            Ok(())
+                        },
+                    );
+                    self.ping_oneway(ctx, reply)
                         .instrument(
                             tracing::trace_span!(
                                 "dispatching", interface = "Test", method = "ping",
                                 method_id = 9u32
                             ),
                         )
-                        .await;
-                    drop(gluon_data);
-                    tracing::trace!(interface = "Test", method = "ping", "←");
-                    return_callback
-                        .device()
-                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                        .await?;
                 }
                 10u32 => {
                     let return_callback = gluon_data.read_binder()?;
-                    let mut gluon_out = gluon::DataBuilder::new();
                     let __wire_param_input: proxied::TestEnum = gluon::Convertable::read(
                         &mut gluon_data,
                     )?;
@@ -406,103 +464,109 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         let __w = __wire_param_input;
                         __w.into()
                     };
-                    let (output) = self
-                        .echo(ctx, param_input)
+                    drop(gluon_data);
+                    let reply: gluon::ReplySender<crate::MyTestEnum> = gluon::ReplySender::new(
+                        return_callback,
+                        |output, gluon_out| {
+                            tracing::trace!(
+                                interface = "Test", method = "echo", output =
+                                "crate::MyTestEnum", "←"
+                            );
+                            let __w: proxied::TestEnum = output.into();
+                            __w.write_owned(gluon_out)?;
+                            Ok(())
+                        },
+                    );
+                    self.echo_oneway(ctx, param_input, reply)
                         .instrument(
                             tracing::trace_span!(
                                 "dispatching", interface = "Test", method = "echo",
                                 method_id = 10u32
                             ),
                         )
-                        .await;
-                    drop(gluon_data);
-                    tracing::trace!(
-                        interface = "Test", method = "echo", output =
-                        "crate::MyTestEnum", "←"
-                    );
-                    let __w: proxied::TestEnum = output.into();
-                    __w.write_owned(&mut gluon_out)?;
-                    return_callback
-                        .device()
-                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                        .await?;
                 }
                 11u32 => {
                     let return_callback = gluon_data.read_binder()?;
-                    let mut gluon_out = gluon::DataBuilder::new();
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
                     tracing::trace!(
                         interface = "Test", method = "echo_ref", ? param_input,
                         "dispatching"
                     );
-                    let (output) = self
-                        .echo_ref(ctx, param_input)
+                    drop(gluon_data);
+                    let reply: gluon::ReplySender<Test> = gluon::ReplySender::new(
+                        return_callback,
+                        |output, gluon_out| {
+                            tracing::trace!(
+                                interface = "Test", method = "echo_ref", ? output, "←"
+                            );
+                            output.write_owned(gluon_out)?;
+                            Ok(())
+                        },
+                    );
+                    self.echo_ref_oneway(ctx, param_input, reply)
                         .instrument(
                             tracing::trace_span!(
                                 "dispatching", interface = "Test", method = "echo_ref",
                                 method_id = 11u32
                             ),
                         )
-                        .await;
-                    drop(gluon_data);
-                    tracing::trace!(
-                        interface = "Test", method = "echo_ref", ? output, "←"
-                    );
-                    output.write_owned(&mut gluon_out)?;
-                    return_callback
-                        .device()
-                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                        .await?;
                 }
                 12u32 => {
                     let return_callback = gluon_data.read_binder()?;
-                    let mut gluon_out = gluon::DataBuilder::new();
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
                     tracing::trace!(
                         interface = "Test", method = "echo_untyped_ref", ? param_input,
                         "dispatching"
                     );
-                    let (output) = self
-                        .echo_untyped_ref(ctx, param_input)
+                    drop(gluon_data);
+                    let reply: gluon::ReplySender<gluon::ObjectOrRef> = gluon::ReplySender::new(
+                        return_callback,
+                        |output, gluon_out| {
+                            tracing::trace!(
+                                interface = "Test", method = "echo_untyped_ref", ? output,
+                                "←"
+                            );
+                            output.write_owned(gluon_out)?;
+                            Ok(())
+                        },
+                    );
+                    self.echo_untyped_ref_oneway(ctx, param_input, reply)
                         .instrument(
                             tracing::trace_span!(
                                 "dispatching", interface = "Test", method =
                                 "echo_untyped_ref", method_id = 12u32
                             ),
                         )
-                        .await;
-                    drop(gluon_data);
-                    tracing::trace!(
-                        interface = "Test", method = "echo_untyped_ref", ? output, "←"
-                    );
-                    output.write_owned(&mut gluon_out)?;
-                    return_callback
-                        .device()
-                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                        .await?;
                 }
                 13u32 => {
                     let return_callback = gluon_data.read_binder()?;
-                    let mut gluon_out = gluon::DataBuilder::new();
                     tracing::trace!(
                         interface = "Test", method = "get_position", "dispatching"
                     );
-                    let (position) = self
-                        .get_position(ctx)
+                    drop(gluon_data);
+                    let reply: gluon::ReplySender<crate::MyVec3> = gluon::ReplySender::new(
+                        return_callback,
+                        |position, gluon_out| {
+                            tracing::trace!(
+                                interface = "Test", method = "get_position", position =
+                                "crate::MyVec3", "←"
+                            );
+                            let __w: super::types::proxied::Vec3 = position.into();
+                            __w.write_owned(gluon_out)?;
+                            Ok(())
+                        },
+                    );
+                    self.get_position_oneway(ctx, reply)
                         .instrument(
                             tracing::trace_span!(
                                 "dispatching", interface = "Test", method = "get_position",
                                 method_id = 13u32
                             ),
                         )
-                        .await;
-                    drop(gluon_data);
-                    tracing::trace!(
-                        interface = "Test", method = "get_position", position =
-                        "crate::MyVec3", "←"
-                    );
-                    let __w: super::types::proxied::Vec3 = position.into();
-                    __w.write_owned(&mut gluon_out)?;
-                    return_callback
-                        .device()
-                        .transact_one_way(&return_callback, 0, gluon_out.to_payload())?;
+                        .await?;
                 }
                 _ => {}
             }

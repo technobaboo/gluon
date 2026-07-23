@@ -1044,18 +1044,3 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
-
-[[patch.unused]]
-name = "tracing-tracy"
-version = "0.11.4"
-source = "git+https://github.com/nagisa/rust_tracy_client?tag=tracy-client-v0.18.4#baec2afb4bbcba18ef6afb6b9ff2b7ba26e577d8"
-
-[[patch.unused]]
-name = "tracy-client"
-version = "0.18.4"
-source = "git+https://github.com/nagisa/rust_tracy_client?tag=tracy-client-v0.18.4#baec2afb4bbcba18ef6afb6b9ff2b7ba26e577d8"
-
-[[patch.unused]]
-name = "tracy-client-sys"
-version = "0.28.0"
-source = "git+https://github.com/nagisa/rust_tracy_client?tag=tracy-client-v0.18.4#baec2afb4bbcba18ef6afb6b9ff2b7ba26e577d8"

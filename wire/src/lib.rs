@@ -294,6 +294,42 @@ pub struct Context {
     pub sender_pid: RawPid,
     pub sender_euid: RawUid,
 }
+
+/// Handle to reply to a call whose return value is being sent back asynchronously,
+/// separately from the `_oneway` dispatch future completing. Call `send(value)` with
+/// the same value the corresponding non-`_oneway` method would have returned; `encode`
+/// (supplied by codegen when the sender is constructed) knows how to convert and write
+/// that value onto the wire, so callers never touch a `DataBuilder` directly.
+pub struct ReplySender<T> {
+    callback: ObjectOrRef,
+    encode: fn(T, &mut DataBuilder<'_>) -> Result<(), WriteError>,
+}
+
+impl<T> std::fmt::Debug for ReplySender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReplySender")
+            .field("callback", &self.callback)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T> ReplySender<T> {
+    pub fn new(
+        callback: ObjectOrRef,
+        encode: fn(T, &mut DataBuilder<'_>) -> Result<(), WriteError>,
+    ) -> Self {
+        Self { callback, encode }
+    }
+
+    pub fn send(self, value: T) -> Result<(), SendError> {
+        let mut payload = DataBuilder::new();
+        (self.encode)(value, &mut payload)?;
+        self.callback
+            .device()
+            .transact_one_way(&self.callback, 0, payload.to_payload())?;
+        Ok(())
+    }
+}
 pub struct ReturnHandler(mpsc::Sender<Transaction>);
 
 impl std::fmt::Debug for ReturnHandler {
