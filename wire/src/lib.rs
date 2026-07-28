@@ -17,7 +17,9 @@ use binderbinder::{
 };
 use rustix::process::{RawPid, RawUid};
 use std::{
+    future::Future,
     os::fd::{BorrowedFd, OwnedFd},
+    pin::Pin,
     string::FromUtf8Error,
     sync::Arc,
 };
@@ -56,6 +58,24 @@ pub trait Convertable: 'static + Sized {
     fn write<'a, 'b: 'a>(&'b self, data: &mut DataBuilder<'a>) -> Result<(), WriteError>;
     fn write_owned(self, data: &mut DataBuilder<'_>) -> Result<(), WriteError>;
     fn read(data: &mut DataReader) -> Result<Self, ReadError>;
+}
+
+/// Liveness of the remote object a binder object/ref points to.
+pub trait Liveness {
+    /// Whether the remote object is (as far as we know) still alive.
+    fn alive(&self) -> bool;
+    /// Future that resolves once the remote object has died. If we own the
+    /// object locally, it can never die from our own perspective, so the
+    /// future never completes.
+    fn death_notification(&self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+}
+impl Liveness for ObjectOrRef {
+    fn alive(&self) -> bool {
+        BinderObjectOrRef::alive(self)
+    }
+    fn death_notification(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        BinderObjectOrRef::death_notification(self)
+    }
 }
 impl<'a> DataBuilder<'a> {
     pub fn write_str(&mut self, str: &str) -> Result<(), WriteError> {
