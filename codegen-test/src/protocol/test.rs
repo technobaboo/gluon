@@ -190,6 +190,9 @@ impl gluon::Convertable for Test {
         self.obj.write_owned(gluon_data)
     }
 }
+impl gluon::Interface for Test {
+    const ID: &'static str = "org.gluon.Test.Test";
+}
 impl Test {
     pub fn quit(&self) -> Result<(), gluon::SendError> {
         tracing::trace!(interface = "Test", method = "quit", "→");

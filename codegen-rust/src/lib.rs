@@ -388,6 +388,11 @@ pub fn gen_interface(
 ) -> proc_macro2::TokenStream {
     let name = format_ident!("{}", interface_name.to_case(Case::Pascal));
     let handler_name = format_ident!("{name}Handler");
+    let interface_id = format!(
+        "{}.{}",
+        gen_ctx.curr_protocol.name,
+        interface_name.to_case(Case::Pascal)
+    );
     let handler = {
         // Dispatch arms: read wire types from the binder, convert to proxy types for the handler
         // call, then convert return values back to wire types for the response.
@@ -752,6 +757,9 @@ pub fn gen_interface(
                 fn write_owned(self, gluon_data: &mut gluon::DataBuilder<'_>) -> Result<(), gluon::WriteError> {
                     self.obj.write_owned(gluon_data)
                 }
+            }
+            impl gluon::Interface for #name {
+                const ID: &'static str = #interface_id;
             }
             impl #name {
                 #(#methods)*

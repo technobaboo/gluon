@@ -60,6 +60,10 @@ pub trait Convertable: 'static + Sized {
     fn read(data: &mut DataReader) -> Result<Self, ReadError>;
 }
 
+pub trait Interface: ToObjectOrRef {
+    const ID: &'static str;
+}
+
 /// Liveness of the remote object a binder object/ref points to.
 pub trait Liveness {
     /// Whether the remote object is (as far as we know) still alive.
