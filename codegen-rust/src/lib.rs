@@ -174,7 +174,7 @@ pub fn gen_external_protocol_def(gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
                 .iter()
                 .map(|(name, _)| find_proxy_by_name(name, gen_ctx)),
         )
-        .filter_map(|p| p)
+        .flatten()
         .map(|proxy| {
             let fragments = proxy.rust_type.split("::").map(|v| format_ident!("{}", v));
             quote! {pub use #(#fragments)::*;}
