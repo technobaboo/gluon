@@ -17,11 +17,7 @@ use binderbinder::{
 };
 use rustix::process::{RawPid, RawUid};
 use std::{
-    future::Future,
-    os::fd::{BorrowedFd, OwnedFd},
-    pin::Pin,
-    string::FromUtf8Error,
-    sync::Arc,
+    future::Future, ops::DerefMut, os::fd::{BorrowedFd, OwnedFd}, pin::Pin, string::FromUtf8Error, sync::Arc
 };
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -498,4 +494,41 @@ pub struct ExternalGluonType {
     pub name: &'static str,
     pub proxy: Option<&'static str>,
     pub supported_derives: Derives,
+}
+pub enum OnewayFuture {
+    Err(SendError),
+    Future(OnewayFutureInner),
+    Consumed,
+}
+pub struct OnewayFutureInner(mpsc::Receiver<Transaction>);
+impl Future for OnewayFuture {
+    type Output = Result<(), SendError>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.deref_mut() {
+            OnewayFuture::Err(_) => {
+                let OnewayFuture::Err(send_error) =
+                    std::mem::replace(self.deref_mut(), OnewayFuture::Consumed)
+                else {
+                    unreachable!()
+                };
+                std::task::Poll::Ready(Err(send_error))
+            }
+            OnewayFuture::Future(receiver) => receiver.0.poll_recv(cx).map(|_| Ok(())),
+            OnewayFuture::Consumed => std::task::Poll::Ready(Ok(())),
+        }
+    }
+}
+impl<E: Into<SendError>> From<E> for OnewayFuture {
+    fn from(value: E) -> Self {
+        Self::Err(value.into())
+    }
+}
+impl From<mpsc::Receiver<Transaction>> for OnewayFuture {
+    fn from(value: mpsc::Receiver<Transaction>) -> Self {
+        Self::Future(OnewayFutureInner(value))
+    }
 }

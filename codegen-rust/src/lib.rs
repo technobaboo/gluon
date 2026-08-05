@@ -511,11 +511,15 @@ pub fn gen_interface(
             } else {
                 quote! {
                     #i => {
+                        let gluon_ret: Option<gluon::ObjectOrRef> = gluon::Convertable::read(&mut gluon_data)?;
                         #(#params_reads)*
                         #dispatch_trace
                         #(#params_converts)*
                         drop(gluon_data);
                         self.#name(ctx, #(#names),*)#tracing_span_instrument.await;
+                        if let Some(obj) = gluon_ret {
+                            obj.device().transact_one_way(&obj, 0, gluon::DataBuilder::new().to_payload())?;
+                        }
                     },
                 }
             }
@@ -648,7 +652,11 @@ pub fn gen_interface(
             let params_write = param_names.iter().map(|pname| {
                 quote! { #pname.write(&mut gluon_builder)?; }
             }).collect::<Vec<_>>();
+            let params_oneway_write = param_names.iter().map(|pname| {
+                quote! { if let Err(err) = #pname.write(&mut gluon_builder) {return err.into();} }
+            });
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
+            let event_name = format_ident!("{}_event", method.name.to_case(Case::Snake));
             let method_str = method.name.as_str();
             let proxy_trace = if gen_ctx.tracing {
                 let trace_fields = param_names.iter().map(|pname| quote! { ?#pname, });
@@ -724,10 +732,27 @@ pub fn gen_interface(
                 }
                 None => quote! {
                     #doc_comment
-                    pub fn #name(&self, #(#params),*) -> Result<(), gluon::SendError> {
+                    pub fn #name(&self, #(#params),*) -> gluon::OnewayFuture {
+                        use gluon::ToObjectOrRef as _;
                         #(#params_convert)*
                         #proxy_trace
                         let mut gluon_builder = gluon::DataBuilder::new();
+                        let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
+                        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
+                        let gluon_ret: Option<gluon::ObjectOrRef> = Some(gluon_ret.to_binder_object_or_ref());
+                        if let Err(err) = gluon_ret.write(&mut gluon_builder) {return err.into();}
+                        #(#params_oneway_write)*
+                        if let Err(err) = self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload()) {return err.into();}
+                        gluon_recv.into()
+                    }
+                    #doc_comment
+                    #[doc="Fire and Forget, events sent to different objects may not be handled in order"]
+                    pub fn #event_name(&self, #(#params),*) -> Result<(), gluon::SendError> {
+                        #(#params_convert)*
+                        #proxy_trace
+                        let mut gluon_builder = gluon::DataBuilder::new();
+                        let gluon_ret: Option<gluon::ObjectOrRef> = None;
+                        gluon_ret.write(&mut gluon_builder)?;
                         #(#params_write)*
                         self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
                         Ok(())
