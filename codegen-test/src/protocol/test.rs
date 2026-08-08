@@ -194,7 +194,7 @@ impl gluon::Interface for Test {
     const ID: &'static str = "org.gluon.Test.Test";
 }
 impl Test {
-    pub fn quit(&self) -> gluon::OnewayFuture {
+    pub fn quit_waiting(&self) -> gluon::OnewayFuture {
         use gluon::ToObjectOrRef as _;
         tracing::trace!(interface = "Test", method = "quit", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
@@ -216,7 +216,7 @@ impl Test {
         gluon_recv.into()
     }
     ///Fire and Forget, events sent to different objects may not be handled in order
-    pub fn quit_event(&self) -> Result<(), gluon::SendError> {
+    pub fn quit(&self) -> Result<(), gluon::SendError> {
         tracing::trace!(interface = "Test", method = "quit", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let gluon_ret: Option<gluon::ObjectOrRef> = None;

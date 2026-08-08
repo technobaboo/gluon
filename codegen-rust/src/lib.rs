@@ -656,7 +656,7 @@ pub fn gen_interface(
                 quote! { if let Err(err) = #pname.write(&mut gluon_builder) {return err.into();} }
             });
             let name = format_ident!("{}", method.name.to_case(Case::Snake));
-            let event_name = format_ident!("{}_event", method.name.to_case(Case::Snake));
+            let waiting_name = format_ident!("{}_waiting", method.name.to_case(Case::Snake));
             let method_str = method.name.as_str();
             let proxy_trace = if gen_ctx.tracing {
                 let trace_fields = param_names.iter().map(|pname| quote! { ?#pname, });
@@ -732,7 +732,7 @@ pub fn gen_interface(
                 }
                 None => quote! {
                     #doc_comment
-                    pub fn #name(&self, #(#params),*) -> gluon::OnewayFuture {
+                    pub fn #waiting_name(&self, #(#params),*) -> gluon::OnewayFuture {
                         use gluon::ToObjectOrRef as _;
                         #(#params_convert)*
                         #proxy_trace
@@ -747,7 +747,7 @@ pub fn gen_interface(
                     }
                     #doc_comment
                     #[doc="Fire and Forget, events sent to different objects may not be handled in order"]
-                    pub fn #event_name(&self, #(#params),*) -> Result<(), gluon::SendError> {
+                    pub fn #name(&self, #(#params),*) -> Result<(), gluon::SendError> {
                         #(#params_convert)*
                         #proxy_trace
                         let mut gluon_builder = gluon::DataBuilder::new();
