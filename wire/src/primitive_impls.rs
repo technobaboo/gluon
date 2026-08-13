@@ -1,5 +1,4 @@
-use crate::{Convertable, ReadError, WriteError};
-use binderbinder::binder_object::BinderObjectOrRef;
+use crate::{Convertable, ReadError, Ref, WriteError};
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
@@ -7,11 +6,11 @@ use std::{
 };
 
 impl<T: Convertable> Convertable for Box<T> {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         (**self).write(data)
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         (*self).write_owned(data)
     }
 
@@ -21,7 +20,7 @@ impl<T: Convertable> Convertable for Box<T> {
 }
 
 impl<T: Convertable, E: Convertable> Convertable for Result<T, E> {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_bool(self.is_ok())?;
         match self {
             Ok(v) => v.write(data)?,
@@ -30,7 +29,7 @@ impl<T: Convertable, E: Convertable> Convertable for Result<T, E> {
         Ok(())
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_bool(self.is_ok())?;
         match self {
             Ok(v) => v.write_owned(data)?,
@@ -49,7 +48,7 @@ impl<T: Convertable, E: Convertable> Convertable for Result<T, E> {
     }
 }
 impl<K: Hash + Eq + Convertable, V: Convertable> Convertable for HashMap<K, V> {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(self.len().try_into().map_err(|_| WriteError::ListToLong)?)?;
         for (k, v) in self.iter() {
             k.write(data)?;
@@ -58,7 +57,7 @@ impl<K: Hash + Eq + Convertable, V: Convertable> Convertable for HashMap<K, V> {
         Ok(())
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(self.len().try_into().map_err(|_| WriteError::ListToLong)?)?;
         for (k, v) in self.into_iter() {
             k.write_owned(data)?;
@@ -77,7 +76,7 @@ impl<K: Hash + Eq + Convertable, V: Convertable> Convertable for HashMap<K, V> {
     }
 }
 impl<T: Hash + Eq + Convertable> Convertable for HashSet<T> {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(self.len().try_into().map_err(|_| WriteError::ListToLong)?)?;
         for v in self.iter() {
             v.write(data)?;
@@ -85,7 +84,7 @@ impl<T: Hash + Eq + Convertable> Convertable for HashSet<T> {
         Ok(())
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(self.len().try_into().map_err(|_| WriteError::ListToLong)?)?;
         for v in self.into_iter() {
             v.write_owned(data)?;
@@ -104,7 +103,7 @@ impl<T: Hash + Eq + Convertable> Convertable for HashSet<T> {
 }
 
 impl<T: Convertable> Convertable for Vec<T> {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(self.len().try_into().map_err(|_| WriteError::ListToLong)?)?;
         for v in self.iter() {
             v.write(data)?;
@@ -112,7 +111,7 @@ impl<T: Convertable> Convertable for Vec<T> {
         Ok(())
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(self.len().try_into().map_err(|_| WriteError::ListToLong)?)?;
         for v in self.into_iter() {
             v.write_owned(data)?;
@@ -130,7 +129,7 @@ impl<T: Convertable> Convertable for Vec<T> {
     }
 }
 impl<T: Convertable> Convertable for Option<T> {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_bool(self.is_some())?;
         if let Some(v) = self {
             v.write(data)?;
@@ -138,7 +137,7 @@ impl<T: Convertable> Convertable for Option<T> {
         Ok(())
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_bool(self.is_some())?;
         if let Some(v) = self {
             v.write_owned(data)?;
@@ -151,21 +150,21 @@ impl<T: Convertable> Convertable for Option<T> {
     }
 }
 
-impl Convertable for BinderObjectOrRef {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
-        data.write_binder(self)
+impl Convertable for Ref {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
+        data.write_ref(self)
     }
 
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
-        data.read_binder()
+        data.read_ref()
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
-        data.write_binder(&self)
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
+        data.write_ref(&self)
     }
 }
 impl Convertable for OwnedFd {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_fd(self.as_fd())
     }
 
@@ -173,12 +172,12 @@ impl Convertable for OwnedFd {
         data.read_fd()
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_owned_fd(self)
     }
 }
 impl Convertable for String {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_str(self)
     }
 
@@ -186,129 +185,129 @@ impl Convertable for String {
         data.read_string()
     }
 
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_str(&self)
     }
 }
 
 impl Convertable for bool {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_bool(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_bool()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_bool(self)
     }
 }
 impl Convertable for u64 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u64(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_u64()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u64(self)
     }
 }
 impl Convertable for i64 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i64(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_i64()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i64(self)
     }
 }
 impl Convertable for f64 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_f64(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_f64()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_f64(self)
     }
 }
 impl Convertable for u32 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_u32()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u32(self)
     }
 }
 impl Convertable for i32 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i32(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_i32()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i32(self)
     }
 }
 impl Convertable for f32 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_f32(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_f32()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_f32(self)
     }
 }
 impl Convertable for u16 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u16(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_u16()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u16(self)
     }
 }
 impl Convertable for i16 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i16(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_i16()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i16(self)
     }
 }
 impl Convertable for u8 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u8(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_u8()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_u8(self)
     }
 }
 impl Convertable for i8 {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut crate::DataBuilder<'a>) -> Result<(), WriteError> {
+    fn write(&self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i8(*self)
     }
     fn read(data: &mut crate::DataReader) -> Result<Self, ReadError> {
         data.read_i8()
     }
-    fn write_owned(self, data: &mut crate::DataBuilder<'_>) -> Result<(), WriteError> {
+    fn write_owned(self, data: &mut crate::DataBuilder) -> Result<(), WriteError> {
         data.write_i8(self)
     }
 }

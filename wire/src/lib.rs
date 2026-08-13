@@ -1,156 +1,473 @@
-pub mod primitive_impls;
-pub use binderbinder::{
-    TransactionHandler as Handler,
-    binder_object::{
-        BinderObject as Object, BinderObjectOrRef as ObjectOrRef, BinderObjectRef as ObjectRef,
-        OwnedBinderObjectRefTrait as OwnedObjectRef, ToBinderObjectOrRef as ToObjectOrRef,
-    },
-    device::Transaction,
-    payload::PayloadBuilder,
-};
-pub use gluon_derive::Handler;
+//! Wire types for gluon over [`strong_ipc`].
+//!
+//! # Message layout
+//!
+//! strong-ipc messages are a byte payload plus an ordered list of descriptors, with no
+//! notion of a transaction code and no typed objects embedded in the bytes. gluon adds
+//! both on top:
+//!
+//! ```text
+//!   [u32 LE transaction code][payload bytes...]   + descriptors, in write order
+//! ```
+//!
+//! Descriptors are matched to their slots positionally, exactly as binder did: the
+//! schema decides how many are written and in what order, so the reader pops them in
+//! the same order rather than tagging them in the byte stream. A [`Ref`] and a plain
+//! `OwnedFd` are indistinguishable on the wire — both are just descriptors — so reading
+//! a payload against the wrong schema yields the wrong Rust type rather than an error.
+//!
+//! Code `0` is the reply code used by [`ReplySender`]; generated method codes start at 8.
+//!
+//! # Refs and nodes
+//!
+//! binder had objects you host and refs to someone else's; strong-ipc's [`Ref`] and
+//! [`Node`] are used here directly, unwrapped. A `Ref` is a capability to send to a node,
+//! and it carries identity — strong-ipc dedupes descriptors for the same socket through a
+//! registry — so two refs received in separate messages that lead to the same node
+//! compare equal and hash alike, as binder's objects did.
+//!
+//! A `Node` deliberately holds no `Ref` to itself, so [`Node::new`] hands both back and
+//! generated [`RefExt`] impls pass the ref straight into a proxy. Keep the node:
+//! dropping it hangs its socket up and every ref to it goes dead.
 
-use binderbinder::{
-    TransactionHandler,
-    binder_object::{BinderObjectOrRef, ToBinderObjectOrRef},
-    payload::{PayloadBinderRefReadError, PayloadObjectReadError, PayloadReader},
+pub mod primitive_impls;
+pub use gluon_derive::Handler;
+pub use strong_ipc::{
+    BoundNode, FdVec, Handler, MAX_MESSAGE_SIZE, Message, Node, NodeError, Ref, UCred, WeakRef,
 };
-use rustix::process::{RawPid, RawUid};
+
+use rustix::process::{RawGid, RawPid, RawUid};
 use std::{
     future::Future,
+    marker::PhantomData,
     os::fd::{BorrowedFd, OwnedFd},
     pin::Pin,
     string::FromUtf8Error,
     sync::Arc,
 };
+use strong_ipc::TrySendError;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-pub struct DataBuilder<'a> {
-    payload: PayloadBuilder<'a>,
+/// The reply-carrying transaction code. Generated method codes start at 8, so this can
+/// never collide with one.
+pub const REPLY_CODE: u32 = 0;
+
+/// A descriptor waiting to go out on a message.
+///
+/// [`Message`] only accepts an `OwnedFd` or a `Ref`, so a borrowed fd is duplicated when
+/// it is written. The kernel dups again out of `SCM_RIGHTS` at send time either way, so
+/// this costs one extra `dup` on the borrowed path and nothing on the owned one.
+enum Attachment {
+    Fd(OwnedFd),
+    Ref(Ref),
+}
+
+pub struct DataBuilder {
+    /// starts with four zero bytes reserved for the transaction code, patched in by
+    /// [`DataBuilder::finish`] so the code never costs a second buffer or a copy
+    data: Vec<u8>,
+    fds: Vec<Attachment>,
 }
 
 pub struct DataReader {
-    payload: PayloadReader,
+    /// owned rather than borrowed from the receive buffer: a [`DataReader`] outlives the
+    /// handler call when it travels through [`ReturnHandler`]'s channel to a waiting
+    /// proxy method
+    data: Vec<u8>,
+    cursor: usize,
+    fds: std::vec::IntoIter<OwnedFd>,
 }
-impl<'a> Default for DataBuilder<'a> {
+
+impl Default for DataBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
-impl<'a> DataBuilder<'a> {
+impl DataBuilder {
     pub fn new() -> Self {
         Self {
-            payload: PayloadBuilder::new(),
+            data: vec![0; size_of::<u32>()],
+            fds: Vec::new(),
         }
     }
-    pub fn to_payload(self) -> PayloadBuilder<'a> {
-        self.payload
+    /// Seals this payload into a message carrying `code`.
+    pub fn finish(self, code: u32) -> Message {
+        let Self { mut data, fds } = self;
+        data[..size_of::<u32>()].copy_from_slice(&code.to_le_bytes());
+        let mut message = Message::from_data(data);
+        for fd in fds {
+            match fd {
+                Attachment::Fd(fd) => message.add_fd(fd),
+                Attachment::Ref(node_ref) => message.add_ref(&node_ref),
+            }
+        }
+        message
     }
 }
 impl DataReader {
-    pub fn from_payload(payload: PayloadReader) -> Self {
-        Self { payload }
+    /// Splits a received message into its transaction code and a reader over the rest.
+    pub fn from_wire(data: &[u8], fds: FdVec) -> Result<(u32, Self), ReadError> {
+        let code = data
+            .get(..size_of::<u32>())
+            .and_then(|b| b.try_into().ok())
+            .map(u32::from_le_bytes)
+            .ok_or(ReadError::NotEnoughBytes)?;
+        Ok((
+            code,
+            Self {
+                data: data.to_vec(),
+                cursor: size_of::<u32>(),
+                fds: fds.into_vec().into_iter(),
+            },
+        ))
+    }
+
+    fn read_bytes(&mut self, len: usize) -> Result<&[u8], ReadError> {
+        let end = self
+            .cursor
+            .checked_add(len)
+            .ok_or(ReadError::NotEnoughBytes)?;
+        let bytes = self
+            .data
+            .get(self.cursor..end)
+            .ok_or(ReadError::NotEnoughBytes)?;
+        self.cursor = end;
+        Ok(bytes)
     }
 }
 
 pub trait Convertable: 'static + Sized {
-    fn write<'a, 'b: 'a>(&'b self, data: &mut DataBuilder<'a>) -> Result<(), WriteError>;
-    fn write_owned(self, data: &mut DataBuilder<'_>) -> Result<(), WriteError>;
+    fn write(&self, data: &mut DataBuilder) -> Result<(), WriteError>;
+    fn write_owned(self, data: &mut DataBuilder) -> Result<(), WriteError>;
     fn read(data: &mut DataReader) -> Result<Self, ReadError>;
 }
 
-pub trait Interface: ToObjectOrRef {
+/// Anything that can produce the ref that reaches it.
+pub trait ToRef: Send + Sync + 'static {
+    fn to_ref(&self) -> Ref;
+}
+impl ToRef for Ref {
+    fn to_ref(&self) -> Ref {
+        self.clone()
+    }
+}
+
+pub trait Interface: ToRef {
     const ID: &'static str;
 }
 
-/// Liveness of the remote object a binder object/ref points to.
+/// A handler, or a share of one already in an `Arc`.
+///
+/// Deliberately not `Into<Arc<H>>`, which is ambiguous for the case that matters:
+/// `Arc<H>: Into<Arc<?H>>` matches both `From<T> for T` and `From<T> for Arc<T>`, so
+/// passing an `Arc` leaves `?H` unpinned and the call needs a turbofish. The two impls
+/// here differ in the trait's own parameter rather than only in `Self`, and the reflexive
+/// reading of the `Arc` case (`H = Arc<H>`) fails its `Handler` bound, so exactly one
+/// candidate survives and `H` falls out of the argument on its own.
+pub trait IntoHandler<H: Handler> {
+    fn into_handler(self) -> Arc<H>;
+}
+impl<H: Handler> IntoHandler<H> for H {
+    fn into_handler(self) -> Arc<H> {
+        Arc::new(self)
+    }
+}
+impl<H: Handler> IntoHandler<H> for Arc<H> {
+    fn into_handler(self) -> Arc<H> {
+        self
+    }
+}
+
+/// An interface `H` can answer the methods of.
+///
+/// Generated per interface as `impl<H: TestHandler> HandledBy<H> for Test {}`, which is
+/// what carries the per-interface bound now that [`RefExt`] is not generic over the
+/// handler. That matters because [`RefExt::connect`] mentions no handler at all — with the
+/// bound on the trait, `Test::connect(path)` would have had nothing to infer it from.
+///
+/// The interface is `Self` and the handler is the parameter, not the other way around,
+/// because the orphan rule needs the local type first: an `impl<H: TestHandler>
+/// HandlerFor<Test> for H` leaves `H` uncovered ahead of any local type and is refused
+/// outright.
+pub trait HandledBy<H: Handler>: Interface {}
+
+/// Everything you can do with an interface's proxy besides call its methods: reach a node
+/// that already exists, or put a handler behind a new one.
+///
+/// The handler constructors take [`IntoHandler`], so a handler you already share elsewhere
+/// goes in as the `Arc` and one you don't goes in bare, and they bound `H` by
+/// [`HandledBy<H>`] so only a handler that actually answers this interface's methods
+/// is accepted. A handler for some other interface doesn't fail a check — the call simply
+/// doesn't resolve for it.
+pub trait RefExt: Interface + Sized {
+    /// Wraps a ref you already have.
+    ///
+    /// Only use this when you know the ref leads to something implementing this interface,
+    /// else the consequences are for you to find out.
+    fn from_ref(obj: Ref) -> Self;
+
+    /// Connects to the [`BoundNode`] listening at `path`.
+    ///
+    /// The other side of the bootstrap problem: a path is the one name that isn't itself a
+    /// capability, so this is how you get a first ref without anyone handing you one.
+    /// Nothing checks that whatever is listening speaks this interface.
+    fn connect(path: impl AsRef<std::path::Path> + Send) -> impl Future<Output = Result<Self, NodeError>> + Send {
+        async move { Ok(Self::from_ref(Ref::connect(path).await?)) }
+    }
+
+    /// Runs `handler` on a new node reachable through the returned proxy.
+    ///
+    /// Keep the node. It *is* the node, and dropping it hangs its socket up, so the proxy
+    /// returned beside it goes dead. Use [`Self::new_service`] when you would rather the
+    /// refs decided that.
+    fn new_node<H: Handler>(handler: impl IntoHandler<H>) -> Result<(Node<H>, Self), NodeError>
+    where
+        Self: HandledBy<H>,
+    {
+        let (node, node_ref) = Node::new_raw(handler.into_handler())?;
+        Ok((node, Self::from_ref(node_ref)))
+    }
+
+    /// [`Self::new_node`] for a handler nothing is going to hold onto.
+    ///
+    /// Hands the node's lifetime straight to its refs through [`Node::to_service`], so
+    /// there is no node to keep and the proxy is the whole result. It lives until the last
+    /// ref to it goes, and there is no getting it back to stop it earlier.
+    fn new_service<H: Handler>(handler: impl IntoHandler<H>) -> Result<Self, NodeError>
+    where
+        Self: HandledBy<H>,
+    {
+        let (node, proxy) = Self::new_node(handler)?;
+        node.to_service();
+        Ok(proxy)
+    }
+
+    /// A [`WeakProxy`] to the same node, which does not keep it alive.
+    ///
+    /// What you hold instead of a proxy when holding one would close a loop — a node whose
+    /// child holds a proxy back to it can never be dropped, since a service node's refs
+    /// *are* its lifetime. See [`WeakRef`] for exactly how weak this is.
+    fn downgrade(&self) -> WeakProxy<Self> {
+        WeakProxy::from(self.to_ref().downgrade())
+    }
+
+    /// The handler behind this proxy, if it leads to a node in *this* process.
+    ///
+    /// A proxy a peer handed you is normally opaque — you call its methods and the wire
+    /// decides what happens. But a process that is both ends of an interface handed out
+    /// the node in the first place, and a ref it gets back is recognised on arrival, so
+    /// the handler is a hash lookup away rather than a round trip through its own wire
+    /// format. That is the whole shortcut, and why it is behind a feature.
+    ///
+    /// The [`HandledBy<H>`] bound is doing real work here: it is what stops this being a
+    /// blind downcast. Asking a `Spatial` for a handler that only answers `Field`'s
+    /// methods doesn't return `None`, it doesn't compile — the same bound that decides
+    /// what may be *put* behind this interface decides what may be recovered from it.
+    ///
+    /// `None` means every way this can fail to be a handler you can have: the proxy leads
+    /// to another process, its node is gone, or it is some other `H` entirely.
+    #[cfg(feature = "local-handlers")]
+    fn local_handler<H: Handler>(&self) -> Option<Arc<H>>
+    where
+        Self: HandledBy<H>,
+    {
+        self.to_ref().local_handler::<H>()
+    }
+}
+
+/// A proxy you can reach for but are not keeping alive.
+///
+/// The typed form of [`WeakRef`], and the reason it is one generic type rather than a
+/// generated `WeakSpatial` beside every `Spatial`: a proxy is only ever a [`Ref`] plus the
+/// interface it is read at, so weakening it is the same operation for all of them and the
+/// codegen has nothing to say about it. [`RefExt::downgrade`] makes one and
+/// [`WeakProxy::upgrade`] gives the proxy back.
+///
+/// See [`WeakRef`] for what weak means here — it is narrower than "the node is alive", and
+/// the difference matters. In short: this upgrades while something **in this process** is
+/// still holding the proxy up, which is exactly the question a reference cycle asks.
+pub struct WeakProxy<I: Interface> {
+    obj: WeakRef,
+    /// `fn() -> I` rather than `I` so this is `Send`, `Sync` and covariant no matter what
+    /// the interface is — it stands for an interface this can *produce*, and holds none
+    _interface: PhantomData<fn() -> I>,
+}
+
+impl<I: RefExt> WeakProxy<I> {
+    /// A `WeakProxy` that never upgrades, for a field that has to exist first.
+    pub fn new() -> Self {
+        Self {
+            obj: WeakRef::new(),
+            _interface: PhantomData,
+        }
+    }
+
+    /// The proxy, if anything here is still holding it up.
+    pub fn upgrade(&self) -> Option<I> {
+        self.obj.upgrade().map(I::from_ref)
+    }
+
+    /// Could [`WeakProxy::upgrade`] succeed right now?
+    ///
+    /// For logging and assertions; anything acting on the answer should `upgrade` and keep
+    /// what it gets, since the last strong proxy can go between the two calls.
+    pub fn is_live(&self) -> bool {
+        self.obj.is_live()
+    }
+
+    /// The untyped capability underneath, still weak.
+    pub fn as_weak_ref(&self) -> &WeakRef {
+        &self.obj
+    }
+}
+
+impl<I: RefExt> From<WeakRef> for WeakProxy<I> {
+    /// Reads a weak capability at this interface.
+    ///
+    /// The weak counterpart of [`RefExt::from_ref`], and it trusts you the same way:
+    /// nothing checks that the ref leads to something speaking `I`.
+    fn from(obj: WeakRef) -> Self {
+        Self {
+            obj,
+            _interface: PhantomData,
+        }
+    }
+}
+
+impl<I: RefExt> Default for WeakProxy<I> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Hand-written rather than derived: `derive(Clone)` would demand `I: Clone`, which is
+/// beside the point when the interface is only a marker here and never held.
+impl<I: Interface> Clone for WeakProxy<I> {
+    fn clone(&self) -> Self {
+        Self {
+            obj: self.obj.clone(),
+            _interface: PhantomData,
+        }
+    }
+}
+
+/// The same capability identity [`Ref`] and [`WeakRef`] use. Two `WeakProxy`s are equal
+/// when they name one socket; the interface plays no part, since it is a reading of that
+/// socket and not a property of it.
+impl<I: Interface> PartialEq for WeakProxy<I> {
+    fn eq(&self, other: &Self) -> bool {
+        self.obj == other.obj
+    }
+}
+impl<I: Interface> Eq for WeakProxy<I> {}
+
+impl<I: Interface> std::hash::Hash for WeakProxy<I> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.obj.hash(state);
+    }
+}
+
+impl<I: Interface> std::fmt::Debug for WeakProxy<I> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WeakProxy<{}>({:?})", I::ID, self.obj)
+    }
+}
+
+/// Liveness of the node a ref points to.
 pub trait Liveness {
-    /// Whether the remote object is (as far as we know) still alive.
+    /// Whether the node is (as far as we know) still alive.
     fn alive(&self) -> bool;
-    /// Future that resolves once the remote object has died. If we own the
-    /// object locally, it can never die from our own perspective, so the
-    /// future never completes.
+    /// Future that resolves once the node has died.
     fn death_notification(&self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 }
-impl Liveness for ObjectOrRef {
+impl Liveness for Ref {
     fn alive(&self) -> bool {
-        BinderObjectOrRef::alive(self)
+        !self.is_dead()
     }
     fn death_notification(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        BinderObjectOrRef::death_notification(self)
+        let node_ref = self.clone();
+        Box::pin(async move { node_ref.death_notification().await })
     }
 }
-impl<'a> DataBuilder<'a> {
+
+/// Sends `data` to `target` under `code`.
+///
+/// Never blocks: this is [`Ref::try_send`], so a peer that is merely behind reports
+/// [`SendError::Full`] rather than parking the caller.
+pub fn transact(target: &Ref, code: u32, data: DataBuilder) -> Result<(), SendError> {
+    target.try_send(data.finish(code)).map_err(SendError::from)
+}
+
+impl DataBuilder {
     pub fn write_str(&mut self, str: &str) -> Result<(), WriteError> {
         if str.len() > u32::MAX as usize {
             return Err(WriteError::StringToLong);
         }
         self.write_u32(str.len() as u32)?;
-        self.payload.push_bytes(str.as_bytes());
+        self.data.extend_from_slice(str.as_bytes());
         Ok(())
     }
     pub fn write_f64(&mut self, float: f64) -> Result<(), WriteError> {
-        self.payload.push_bytes(&float.to_le_bytes());
+        self.data.extend_from_slice(&float.to_le_bytes());
         Ok(())
     }
     pub fn write_f32(&mut self, float: f32) -> Result<(), WriteError> {
-        self.payload.push_bytes(&float.to_le_bytes());
+        self.data.extend_from_slice(&float.to_le_bytes());
         Ok(())
     }
     pub fn write_bool(&mut self, bool: bool) -> Result<(), WriteError> {
         self.write_u8(bool as u8)?;
         Ok(())
     }
-    pub fn write_fd<'fd: 'a>(&mut self, fd: BorrowedFd<'fd>) -> Result<(), WriteError> {
-        self.payload.push_fd(fd, 0);
+    /// Duplicates `fd` — see [`Attachment`]. Prefer [`DataBuilder::write_owned_fd`].
+    pub fn write_fd(&mut self, fd: BorrowedFd<'_>) -> Result<(), WriteError> {
+        let fd = fd.try_clone_to_owned().map_err(WriteError::DupFd)?;
+        self.fds.push(Attachment::Fd(fd));
         Ok(())
     }
     pub fn write_owned_fd(&mut self, fd: OwnedFd) -> Result<(), WriteError> {
-        self.payload.push_owned_fd(fd, 0);
+        self.fds.push(Attachment::Fd(fd));
         Ok(())
     }
-    pub fn write_binder(
-        &mut self,
-        binder_ref: &impl ToBinderObjectOrRef,
-    ) -> Result<(), WriteError> {
-        self.payload.push_binder_ref(binder_ref);
+    pub fn write_ref(&mut self, node_ref: &impl ToRef) -> Result<(), WriteError> {
+        self.fds.push(Attachment::Ref(node_ref.to_ref()));
         Ok(())
     }
 }
 
 // the ints
-impl DataBuilder<'_> {
+impl DataBuilder {
     pub fn write_u64(&mut self, int: u64) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
     pub fn write_i64(&mut self, int: i64) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
     pub fn write_u32(&mut self, int: u32) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
     pub fn write_i32(&mut self, int: i32) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
     pub fn write_u16(&mut self, int: u16) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
     pub fn write_i16(&mut self, int: i16) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
     pub fn write_u8(&mut self, int: u8) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
     pub fn write_i8(&mut self, int: i8) -> Result<(), WriteError> {
-        self.payload.push_bytes(&int.to_le_bytes());
+        self.data.extend_from_slice(&int.to_le_bytes());
         Ok(())
     }
 }
@@ -160,31 +477,24 @@ pub enum WriteError {
     StringToLong,
     #[error("List is longer than u32::MAX items")]
     ListToLong,
+    #[error("Could not duplicate borrowed fd: {0}")]
+    DupFd(#[source] std::io::Error),
 }
 
 impl DataReader {
     pub fn read_string(&mut self) -> Result<String, ReadError> {
         let len = self.read_u32()?;
-        let data = self
-            .payload
-            .read_bytes(len as usize)
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let data = self.read_bytes(len as usize)?;
         Ok(String::from_utf8(data.to_vec())?)
     }
     pub fn read_f64(&mut self) -> Result<f64, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<f64>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<f64>())?;
         Ok(f64::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_f32(&mut self) -> Result<f32, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<f32>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<f32>())?;
         Ok(f32::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
@@ -193,94 +503,59 @@ impl DataReader {
         Ok(self.read_u8()? != 0)
     }
     pub fn read_fd(&mut self) -> Result<OwnedFd, ReadError> {
-        self.payload
-            .read_fd()
-            .map_err(|err| match err {
-                PayloadObjectReadError::IncorrectObject => ReadError::IncorrectPrimitiveType,
-                PayloadObjectReadError::Empty => ReadError::NotEnoughBytes,
-            })
-            .map(|v| v.0)
+        self.fds.next().ok_or(ReadError::MissingDescriptor)
     }
-    pub fn read_binder(&mut self) -> Result<BinderObjectOrRef, ReadError> {
-        self.payload.read_binder_ref().map_err(|err| match err {
-            PayloadBinderRefReadError::IncorrectObject => ReadError::IncorrectPrimitiveType,
-            PayloadBinderRefReadError::UnknownBinderObject => ReadError::UnregisteredBinderObject,
-            PayloadBinderRefReadError::DeadBinderObject => ReadError::DeadBinderObject,
-            PayloadBinderRefReadError::Empty => ReadError::NotEnoughBytes,
-        })
+    pub fn read_ref(&mut self) -> Result<Ref, ReadError> {
+        self.read_fd().map(Ref::from_owned_fd)
     }
 }
 
 // the ints
 impl DataReader {
     pub fn read_u64(&mut self) -> Result<u64, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<u64>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<u64>())?;
         Ok(u64::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_i64(&mut self) -> Result<i64, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<i64>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<i64>())?;
         Ok(i64::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_u32(&mut self) -> Result<u32, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<u32>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<u32>())?;
         Ok(u32::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_i32(&mut self) -> Result<i32, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<i32>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<i32>())?;
         Ok(i32::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_u16(&mut self) -> Result<u16, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<u16>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<u16>())?;
         Ok(u16::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_i16(&mut self) -> Result<i16, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<i16>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<i16>())?;
         Ok(i16::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_u8(&mut self) -> Result<u8, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<u8>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<u8>())?;
         Ok(u8::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
     }
     pub fn read_i8(&mut self) -> Result<i8, ReadError> {
-        let bytes = self
-            .payload
-            .read_bytes(size_of::<i8>())
-            .map_err(|_| ReadError::NotEnoughBytes)?;
+        let bytes = self.read_bytes(size_of::<i8>())?;
         Ok(i8::from_le_bytes(
             bytes.try_into().map_err(|_| ReadError::NotEnoughBytes)?,
         ))
@@ -291,12 +566,8 @@ impl DataReader {
 pub enum ReadError {
     #[error("Not enough bytes for type")]
     NotEnoughBytes,
-    #[error("Incorrect binder primitive type found")]
-    IncorrectPrimitiveType,
-    #[error("BinderObject not Registered")]
-    UnregisteredBinderObject,
-    #[error("BinderObject dead")]
-    DeadBinderObject,
+    #[error("Message carried fewer descriptors than the schema expects")]
+    MissingDescriptor,
     #[error("String data is not valid utf8: {0}")]
     StringNotUtf8(#[from] FromUtf8Error),
     #[error("Unkown enum variant: {0}")]
@@ -309,14 +580,57 @@ pub enum SendError {
     ParamWriteError(#[from] WriteError),
     #[error("Failed to read return values: {0}")]
     ReturnReadError(#[from] ReadError),
-    #[error("Transaction error: {0}")]
-    TransactionError(#[from] binderbinder::error::Error),
+    /// The peer is alive but behind: its socket buffer and outbound queue are both full.
+    ///
+    /// binder had no equivalent — it blocked instead. gluon's one-way sends never block,
+    /// so backpressure surfaces here and the message was **not** delivered.
+    #[error("The peer's outbound queue is full")]
+    Full,
+    #[error("The peer is gone")]
+    Closed,
+    #[error("Payload is over the {MAX_MESSAGE_SIZE} byte limit")]
+    TooLarge,
+    #[error("Could not create the reply object: {0}")]
+    Node(#[from] NodeError),
+}
+impl From<TrySendError> for SendError {
+    fn from(err: TrySendError) -> Self {
+        match err {
+            TrySendError::Full(_) => SendError::Full,
+            TrySendError::TooLarge(_) => SendError::TooLarge,
+            TrySendError::Closed(_) => SendError::Closed,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+/// Who sent the transaction being handled, as reported by the kernel.
+///
+/// The credentials are an `Option` because `SCM_CREDENTIALS` is what supplies them.
+/// strong-ipc sets `SO_PASSCRED` on every socket it receives on, so in practice they are
+/// always present — but a peer not going through this crate is not obliged to cooperate,
+/// and a handler that gates on identity should treat `None` as "unknown", never as
+/// "trusted".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Context {
-    pub sender_pid: RawPid,
-    pub sender_euid: RawUid,
+    creds: Option<UCred>,
+}
+
+impl Context {
+    pub fn new(creds: Option<UCred>) -> Self {
+        Self { creds }
+    }
+    pub fn creds(&self) -> Option<UCred> {
+        self.creds
+    }
+    pub fn sender_pid(&self) -> Option<RawPid> {
+        self.creds.map(|c| c.pid.as_raw_nonzero().get())
+    }
+    pub fn sender_uid(&self) -> Option<RawUid> {
+        self.creds.map(|c| c.uid.as_raw())
+    }
+    pub fn sender_gid(&self) -> Option<RawGid> {
+        self.creds.map(|c| c.gid.as_raw())
+    }
 }
 
 /// Handle to reply to a call whose return value is being sent back asynchronously,
@@ -325,53 +639,46 @@ pub struct Context {
 /// (supplied by codegen when the sender is constructed) knows how to convert and write
 /// that value onto the wire, so callers never touch a `DataBuilder` directly.
 pub struct ReplySender<T> {
-    callback: ObjectOrRef,
-    encode: fn(T, &mut DataBuilder<'_>) -> Result<(), WriteError>,
+    callback: Ref,
+    encode: fn(T, &mut DataBuilder) -> Result<(), WriteError>,
 }
 
 impl<T> std::fmt::Debug for ReplySender<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ReplySender")
-            .field("callback", &self.callback)
-            .finish_non_exhaustive()
+        f.debug_struct("ReplySender").finish_non_exhaustive()
     }
 }
 
 impl<T> ReplySender<T> {
-    pub fn new(
-        callback: ObjectOrRef,
-        encode: fn(T, &mut DataBuilder<'_>) -> Result<(), WriteError>,
-    ) -> Self {
+    pub fn new(callback: Ref, encode: fn(T, &mut DataBuilder) -> Result<(), WriteError>) -> Self {
         Self { callback, encode }
     }
 
     pub fn send(self, value: T) -> Result<(), SendError> {
         let mut payload = DataBuilder::new();
         (self.encode)(value, &mut payload)?;
-        self.callback
-            .device()
-            .transact_one_way(&self.callback, 0, payload.to_payload())?;
-        Ok(())
+        transact(&self.callback, REPLY_CODE, payload)
     }
 }
-pub struct ReturnHandler(mpsc::Sender<Transaction>);
+
+/// The handler behind the throwaway node a proxy hands out to receive one reply.
+pub struct ReturnHandler(mpsc::Sender<DataReader>);
 
 impl std::fmt::Debug for ReturnHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReturnHandler").finish()
     }
 }
-impl TransactionHandler for ReturnHandler {
-    async fn handle(self: Arc<Self>, _transaction: Transaction) -> PayloadBuilder<'static> {
-        PayloadBuilder::new()
-    }
-
-    async fn handle_one_way(self: Arc<Self>, transaction: Transaction) {
-        _ = self.0.send(transaction).await;
+impl Handler for ReturnHandler {
+    async fn handle(&self, data: &mut [u8], fds: FdVec, _creds: Option<UCred>) {
+        let Ok((_code, reader)) = DataReader::from_wire(data, fds) else {
+            return;
+        };
+        _ = self.0.send(reader).await;
     }
 }
 impl ReturnHandler {
-    pub fn new() -> (Self, mpsc::Receiver<Transaction>) {
+    pub fn new() -> (Self, mpsc::Receiver<DataReader>) {
         let (tx, rx) = mpsc::channel(1);
         (Self(tx), rx)
     }
@@ -381,15 +688,13 @@ impl ReturnHandler {
 mod tests {
     use std::marker::PhantomData;
 
-    use binderbinder::TransactionHandler;
-
     // The derive emits `gluon::` paths; alias this crate so those paths
     // resolve when the tests are compiled as part of `gluon-wire` itself.
     extern crate self as gluon;
 
     use super::*;
 
-    fn assert_handler<T: TransactionHandler>() {}
+    fn assert_handler<T: Handler>() {}
 
     // --- plain struct ---
 
@@ -445,18 +750,49 @@ mod tests {
     }
 
     #[test]
-    fn plain_handler_is_transaction_handler() {
+    fn plain_handler_is_handler() {
         assert_handler::<PlainHandler>();
     }
 
     #[test]
-    fn generic_handler_is_transaction_handler() {
+    fn generic_handler_is_handler() {
         assert_handler::<GenericHandler<u32>>();
     }
 
     #[test]
-    fn where_clause_handler_is_transaction_handler() {
+    fn where_clause_handler_is_handler() {
         assert_handler::<WhereHandler<String>>();
+    }
+
+    #[test]
+    fn code_and_payload_round_trip() {
+        let mut builder = DataBuilder::new();
+        builder.write_u32(7).unwrap();
+        builder.write_str("hello").unwrap();
+        let message = builder.finish(12);
+
+        let (code, mut reader) = DataReader::from_wire(message.data(), FdVec::new()).unwrap();
+        assert_eq!(code, 12);
+        assert_eq!(reader.read_u32().unwrap(), 7);
+        assert_eq!(reader.read_string().unwrap(), "hello");
+    }
+
+    #[test]
+    fn short_message_has_no_code() {
+        assert!(matches!(
+            DataReader::from_wire(&[0, 1], FdVec::new()),
+            Err(ReadError::NotEnoughBytes)
+        ));
+    }
+
+    #[test]
+    fn missing_descriptor_is_an_error() {
+        let message = DataBuilder::new().finish(0);
+        let (_, mut reader) = DataReader::from_wire(message.data(), FdVec::new()).unwrap();
+        assert!(matches!(
+            reader.read_fd(),
+            Err(ReadError::MissingDescriptor)
+        ));
     }
 }
 

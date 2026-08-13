@@ -5,11 +5,14 @@ edition.workspace = true
 
 [features]
 tracing = ["gluon-derive/tracing"]
+# `RefExt::local_handler`: reaching the handler behind a proxy that leads to one of our
+# own nodes, for a process that is both ends of an interface
+local-handlers = ["strong-ipc/local-handlers"]
 
 [dependencies]
-binderbinder.workspace = true
+strong-ipc.workspace = true
 gluon-derive.workspace = true
 bitflags = "2"
-rustix = { version = "1.1.4", default-features = false }
+rustix = { version = "1.1.4", default-features = false, features = ["net"] }
 thiserror = "2.0.18"
-tokio = { version = "1.50.0", default-features = false }
+tokio = { version = "1.53.1", default-features = false, features = ["sync"] }

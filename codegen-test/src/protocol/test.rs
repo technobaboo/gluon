@@ -45,9 +45,9 @@ pub struct TestStruct {
     pub position: crate::MyVec3,
 }
 impl gluon::Convertable for TestStruct {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        gluon_data: &mut gluon::DataBuilder<'a>,
+    fn write(
+        &self,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         self.string.write(gluon_data)?;
         self.id.write(gluon_data)?;
@@ -75,7 +75,7 @@ impl gluon::Convertable for TestStruct {
     }
     fn write_owned(
         self,
-        gluon_data: &mut gluon::DataBuilder<'_>,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         self.string.write_owned(gluon_data)?;
         self.id.write_owned(gluon_data)?;
@@ -94,9 +94,9 @@ pub struct Palette {
     pub secondary: crate::MyColor,
 }
 impl gluon::Convertable for Palette {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        gluon_data: &mut gluon::DataBuilder<'a>,
+    fn write(
+        &self,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         {
             let __w: proxied::Color = self.primary.clone().into();
@@ -121,7 +121,7 @@ impl gluon::Convertable for Palette {
     }
     fn write_owned(
         self,
-        gluon_data: &mut gluon::DataBuilder<'_>,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         {
             let __w: proxied::Color = self.primary.into();
@@ -140,9 +140,9 @@ pub struct MaybeColor {
     pub color: Option<crate::MyColor>,
 }
 impl gluon::Convertable for MaybeColor {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        gluon_data: &mut gluon::DataBuilder<'a>,
+    fn write(
+        &self,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         {
             let __w: Option<proxied::Color> = self.color.clone().map(|__v| __v.into());
@@ -159,7 +159,7 @@ impl gluon::Convertable for MaybeColor {
     }
     fn write_owned(
         self,
-        gluon_data: &mut gluon::DataBuilder<'_>,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         {
             let __w: Option<proxied::Color> = self.color.map(|__v| __v.into());
@@ -170,22 +170,22 @@ impl gluon::Convertable for MaybeColor {
 }
 #[derive(Debug, Clone)]
 pub struct Test {
-    obj: gluon::ObjectOrRef,
+    obj: gluon::Ref,
 }
 impl gluon::Convertable for Test {
-    fn write<'a, 'b: 'a>(
-        &'b self,
-        gluon_data: &mut gluon::DataBuilder<'a>,
+    fn write(
+        &self,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         self.obj.write(gluon_data)
     }
     fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
-        let obj = gluon::ObjectOrRef::read(gluon_data)?;
-        Ok(Test::from_object_or_ref(obj))
+        let obj = gluon::Ref::read(gluon_data)?;
+        Ok(Test::from_ref(obj))
     }
     fn write_owned(
         self,
-        gluon_data: &mut gluon::DataBuilder<'_>,
+        gluon_data: &mut gluon::DataBuilder,
     ) -> Result<(), gluon::WriteError> {
         self.obj.write_owned(gluon_data)
     }
@@ -193,22 +193,29 @@ impl gluon::Convertable for Test {
 impl gluon::Interface for Test {
     const ID: &'static str = "org.gluon.Test.Test";
 }
+///Carries the per-interface bound for [`gluon::RefExt`]'s handler constructors: only a handler implementing this interface's handler trait can be passed to them.
+impl<H: TestHandler> gluon::HandledBy<H> for Test {}
+impl gluon::RefExt for Test {
+    fn from_ref(obj: gluon::Ref) -> Test {
+        Test { obj }
+    }
+}
 impl Test {
     pub fn quit(&self) -> Result<(), gluon::SendError> {
         tracing::trace!(interface = "Test", method = "quit", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
-        self.obj.device().transact_one_way(&self.obj, 8u32, gluon_builder.to_payload())?;
+        gluon::transact(&self.obj, 8u32, gluon_builder)?;
         Ok(())
     }
     pub async fn ping(&self) -> Result<(), gluon::SendError> {
         tracing::trace!(interface = "Test", method = "ping", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
-        gluon_builder.write_binder(&gluon_ret)?;
-        self.obj.device().transact_one_way(&self.obj, 9u32, gluon_builder.to_payload())?;
-        let transaction = gluon_recv.recv().await.unwrap();
-        let mut reader = gluon::DataReader::from_payload(transaction.payload);
+        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        gluon_builder.write_ref(&gluon_ret)?;
+        gluon::transact(&self.obj, 9u32, gluon_builder)?;
+        let mut reader = gluon_recv.recv().await.unwrap();
+        drop(gluon_ret_node);
         tracing::trace!(interface = "Test", method = "ping", "←");
         Ok(())
     }
@@ -220,14 +227,12 @@ impl Test {
         tracing::trace!(interface = "Test", method = "echo", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
-        gluon_builder.write_binder(&gluon_ret)?;
+        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        gluon_builder.write_ref(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
-        self.obj
-            .device()
-            .transact_one_way(&self.obj, 10u32, gluon_builder.to_payload())?;
-        let transaction = gluon_recv.recv().await.unwrap();
-        let mut reader = gluon::DataReader::from_payload(transaction.payload);
+        gluon::transact(&self.obj, 10u32, gluon_builder)?;
+        let mut reader = gluon_recv.recv().await.unwrap();
+        drop(gluon_ret_node);
         let __ret_output = {
             let __w: proxied::TestEnum = gluon::Convertable::read(&mut reader)?;
             __w.into()
@@ -246,36 +251,30 @@ impl Test {
         tracing::trace!(interface = "Test", method = "echo_ref", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
-        gluon_builder.write_binder(&gluon_ret)?;
+        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        gluon_builder.write_ref(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
-        self.obj
-            .device()
-            .transact_one_way(&self.obj, 11u32, gluon_builder.to_payload())?;
-        let transaction = gluon_recv.recv().await.unwrap();
-        let mut reader = gluon::DataReader::from_payload(transaction.payload);
+        gluon::transact(&self.obj, 11u32, gluon_builder)?;
+        let mut reader = gluon_recv.recv().await.unwrap();
+        drop(gluon_ret_node);
         let __ret_output = gluon::Convertable::read(&mut reader)?;
         tracing::trace!(interface = "Test", method = "echo_ref", ? __ret_output, "←");
         Ok(__ret_output)
     }
     pub async fn echo_untyped_ref(
         &self,
-        input: &impl gluon::ToObjectOrRef,
-    ) -> Result<gluon::ObjectOrRef, gluon::SendError> {
-        let input: gluon::ObjectOrRef = gluon::ToObjectOrRef::to_binder_object_or_ref(
-            input,
-        );
+        input: &impl gluon::ToRef,
+    ) -> Result<gluon::Ref, gluon::SendError> {
+        let input: gluon::Ref = gluon::ToRef::to_ref(input);
         tracing::trace!(interface = "Test", method = "echo_untyped_ref", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
-        gluon_builder.write_binder(&gluon_ret)?;
+        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        gluon_builder.write_ref(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
-        self.obj
-            .device()
-            .transact_one_way(&self.obj, 12u32, gluon_builder.to_payload())?;
-        let transaction = gluon_recv.recv().await.unwrap();
-        let mut reader = gluon::DataReader::from_payload(transaction.payload);
+        gluon::transact(&self.obj, 12u32, gluon_builder)?;
+        let mut reader = gluon_recv.recv().await.unwrap();
+        drop(gluon_ret_node);
         let __ret_output = gluon::Convertable::read(&mut reader)?;
         tracing::trace!(
             interface = "Test", method = "echo_untyped_ref", ? __ret_output, "←"
@@ -286,13 +285,11 @@ impl Test {
         tracing::trace!(interface = "Test", method = "get_position", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
         let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
-        gluon_builder.write_binder(&gluon_ret)?;
-        self.obj
-            .device()
-            .transact_one_way(&self.obj, 13u32, gluon_builder.to_payload())?;
-        let transaction = gluon_recv.recv().await.unwrap();
-        let mut reader = gluon::DataReader::from_payload(transaction.payload);
+        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        gluon_builder.write_ref(&gluon_ret)?;
+        gluon::transact(&self.obj, 13u32, gluon_builder)?;
+        let mut reader = gluon_recv.recv().await.unwrap();
+        drop(gluon_ret_node);
         let __ret_position = {
             let __w: super::types::proxied::Vec3 = gluon::Convertable::read(
                 &mut reader,
@@ -305,21 +302,18 @@ impl Test {
         );
         Ok(__ret_position)
     }
-    pub fn from_handler<H: TestHandler>(obj: &impl gluon::OwnedObjectRef<H>) -> Test {
-        Test::from_object_or_ref(gluon::OwnedObjectRef::to_object_or_ref(obj))
-    }
-    ///only use this when you know the binder ref implements this interface, else the consquences are for you to find out
-    pub fn from_object_or_ref(obj: gluon::ObjectOrRef) -> Test {
+    ///only use this when you know the ref leads to something implementing this interface, else the consquences are for you to find out
+    pub fn from_ref(obj: gluon::Ref) -> Test {
         Test { obj }
     }
 }
-impl From<Test> for gluon::ObjectOrRef {
+impl From<Test> for gluon::Ref {
     fn from(value: Test) -> Self {
         value.obj
     }
 }
-impl gluon::ToObjectOrRef for Test {
-    fn to_binder_object_or_ref(&self) -> gluon::ObjectOrRef {
+impl gluon::ToRef for Test {
+    fn to_ref(&self) -> gluon::Ref {
         self.obj.clone()
     }
 }
@@ -395,14 +389,14 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
     fn echo_untyped_ref(
         &self,
         _ctx: gluon::Context,
-        input: gluon::ObjectOrRef,
-    ) -> impl Future<Output = gluon::ObjectOrRef> + Send + Sync;
+        input: gluon::Ref,
+    ) -> impl Future<Output = gluon::Ref> + Send + Sync;
     ///Dispatched instead of [`Self::echo_untyped_ref`] so a slow reply doesn't hold up dispatch of the next transaction. The default implementation just awaits `echo_untyped_ref` and sends the result through `reply`. Override this method instead of `echo_untyped_ref` to defer the reply: stash `reply` (it's `Send + Sync + 'static`) somewhere else — a channel, a queue, another task — and return as soon as this method's future is done, without waiting for the reply to actually be sent.
     fn echo_untyped_ref_oneway(
         &self,
         _ctx: gluon::Context,
-        input: gluon::ObjectOrRef,
-        reply: gluon::ReplySender<gluon::ObjectOrRef>,
+        input: gluon::Ref,
+        reply: gluon::ReplySender<gluon::Ref>,
     ) -> impl Future<Output = Result<(), gluon::SendError>> + Send + Sync {
         async move {
             let output = self.echo_untyped_ref(_ctx, input).await;
@@ -445,7 +439,7 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         .await;
                 }
                 9u32 => {
-                    let return_callback = gluon_data.read_binder()?;
+                    let return_callback = gluon_data.read_ref()?;
                     tracing::trace!(interface = "Test", method = "ping", "dispatching");
                     drop(gluon_data);
                     let reply: gluon::ReplySender<()> = gluon::ReplySender::new(
@@ -465,7 +459,7 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         .await?;
                 }
                 10u32 => {
-                    let return_callback = gluon_data.read_binder()?;
+                    let return_callback = gluon_data.read_ref()?;
                     let __wire_param_input: proxied::TestEnum = gluon::Convertable::read(
                         &mut gluon_data,
                     )?;
@@ -500,7 +494,7 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         .await?;
                 }
                 11u32 => {
-                    let return_callback = gluon_data.read_binder()?;
+                    let return_callback = gluon_data.read_ref()?;
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
                     tracing::trace!(
                         interface = "Test", method = "echo_ref", ? param_input,
@@ -527,14 +521,14 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         .await?;
                 }
                 12u32 => {
-                    let return_callback = gluon_data.read_binder()?;
+                    let return_callback = gluon_data.read_ref()?;
                     let param_input = gluon::Convertable::read(&mut gluon_data)?;
                     tracing::trace!(
                         interface = "Test", method = "echo_untyped_ref", ? param_input,
                         "dispatching"
                     );
                     drop(gluon_data);
-                    let reply: gluon::ReplySender<gluon::ObjectOrRef> = gluon::ReplySender::new(
+                    let reply: gluon::ReplySender<gluon::Ref> = gluon::ReplySender::new(
                         return_callback,
                         |output, gluon_out| {
                             tracing::trace!(
@@ -555,7 +549,7 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
                         .await?;
                 }
                 13u32 => {
-                    let return_callback = gluon_data.read_binder()?;
+                    let return_callback = gluon_data.read_ref()?;
                     tracing::trace!(
                         interface = "Test", method = "get_position", "dispatching"
                     );
@@ -597,9 +591,9 @@ pub mod proxied {
         EmptyVariant,
     }
     impl gluon::Convertable for TestEnum {
-        fn write<'a, 'b: 'a>(
-            &'b self,
-            gluon_data: &mut gluon::DataBuilder<'a>,
+        fn write(
+            &self,
+            gluon_data: &mut gluon::DataBuilder,
         ) -> Result<(), gluon::WriteError> {
             match self {
                 TestEnum::TestStruct { test_struct } => {
@@ -636,7 +630,7 @@ pub mod proxied {
         }
         fn write_owned(
             self,
-            gluon_data: &mut gluon::DataBuilder<'_>,
+            gluon_data: &mut gluon::DataBuilder,
         ) -> Result<(), gluon::WriteError> {
             match self {
                 TestEnum::TestStruct { test_struct } => {
@@ -662,9 +656,9 @@ pub mod proxied {
         Blue,
     }
     impl gluon::Convertable for Color {
-        fn write<'a, 'b: 'a>(
-            &'b self,
-            gluon_data: &mut gluon::DataBuilder<'a>,
+        fn write(
+            &self,
+            gluon_data: &mut gluon::DataBuilder,
         ) -> Result<(), gluon::WriteError> {
             match self {
                 Color::Red => {
@@ -691,7 +685,7 @@ pub mod proxied {
         }
         fn write_owned(
             self,
-            gluon_data: &mut gluon::DataBuilder<'_>,
+            gluon_data: &mut gluon::DataBuilder,
         ) -> Result<(), gluon::WriteError> {
             match self {
                 Color::Red => {

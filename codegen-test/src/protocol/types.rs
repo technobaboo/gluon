@@ -25,9 +25,9 @@ pub mod proxied {
         pub z: f32,
     }
     impl gluon::Convertable for Vec3 {
-        fn write<'a, 'b: 'a>(
-            &'b self,
-            gluon_data: &mut gluon::DataBuilder<'a>,
+        fn write(
+            &self,
+            gluon_data: &mut gluon::DataBuilder,
         ) -> Result<(), gluon::WriteError> {
             self.x.write(gluon_data)?;
             self.y.write(gluon_data)?;
@@ -42,7 +42,7 @@ pub mod proxied {
         }
         fn write_owned(
             self,
-            gluon_data: &mut gluon::DataBuilder<'_>,
+            gluon_data: &mut gluon::DataBuilder,
         ) -> Result<(), gluon::WriteError> {
             self.x.write_owned(gluon_data)?;
             self.y.write_owned(gluon_data)?;

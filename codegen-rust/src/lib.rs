@@ -492,7 +492,7 @@ pub fn gen_interface(
                 };
                 quote! {
                     #i => {
-                        let return_callback = gluon_data.read_binder()?;
+                        let return_callback = gluon_data.read_ref()?;
                         #(#params_reads)*
                         #dispatch_trace
                         #(#params_converts)*
@@ -617,7 +617,7 @@ pub fn gen_interface(
     };
     let proxy = {
         let methods = def.methods.iter().enumerate().map(|(i, method)| {
-            // Params: proxy/nested-proxy types taken directly; untyped refs take &impl OwnedObjectRef;
+            // Params: proxy/nested-proxy types taken directly; untyped refs take &impl ToRef;
             // all others use impl Into<WireType>.
             let param_names: Vec<proc_macro2::Ident> = method.params.iter()
                 .map(|p| format_ident!("{}", p.name.to_case(Case::Snake)))
@@ -627,7 +627,7 @@ pub fn gen_interface(
                     let pub_ty = gen_public_type(&param.ty, gen_ctx);
                     quote! { #pname: #pub_ty }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { #pname: &impl gluon::ToObjectOrRef }
+                    quote! { #pname: &impl gluon::ToRef }
                 } else {
                     let wire_ty = gen_type(&param.ty, gen_ctx);
                     quote! { #pname: impl Into<#wire_ty> }
@@ -640,7 +640,7 @@ pub fn gen_interface(
                     let conv = gen_pub_to_wire(&param.ty, quote! { #pname }, gen_ctx);
                     quote! { let #pname: #wire_ty = #conv; }
                 } else if matches!(param.ty, Type::Ref(None)) {
-                    quote! { let #pname: #wire_ty = gluon::ToObjectOrRef::to_binder_object_or_ref(#pname); }
+                    quote! { let #pname: #wire_ty = gluon::ToRef::to_ref(#pname); }
                 } else {
                     quote! { let #pname: #wire_ty = #pname.into(); }
                 }
@@ -709,13 +709,16 @@ pub fn gen_interface(
                             #proxy_trace
                             let mut gluon_builder = gluon::DataBuilder::new();
                             let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-                            let gluon_ret = self.obj.device().register_object(gluon_ret_handler);
-                            gluon_builder.write_binder(&gluon_ret)?;
+                            // `gluon_ret_node` has to stay in scope until the reply lands:
+                            // dropping it hangs its socket up and the callee's reply would
+                            // go nowhere.
+                            let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+                            gluon_builder.write_ref(&gluon_ret)?;
                             #(#params_write)*
-                            self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
+                            gluon::transact(&self.obj, #i, gluon_builder)?;
                             // safe since we're also holding the channel sender
-                            let transaction = gluon_recv.recv().await.unwrap();
-                            let mut reader = gluon::DataReader::from_payload(transaction.payload);
+                            let mut reader = gluon_recv.recv().await.unwrap();
+                            drop(gluon_ret_node);
                             #(#ret_let_stmts)*
                             #proxy_return_trace
                             Ok(#return_result)
@@ -729,7 +732,7 @@ pub fn gen_interface(
                         #proxy_trace
                         let mut gluon_builder = gluon::DataBuilder::new();
                         #(#params_write)*
-                        self.obj.device().transact_one_way(&self.obj, #i, gluon_builder.to_payload())?;
+                        gluon::transact(&self.obj, #i, gluon_builder)?;
                         Ok(())
                     }
                 },
@@ -738,48 +741,51 @@ pub fn gen_interface(
         quote! {
             #[derive(Debug, Clone)]
             pub struct #name {
-                obj: gluon::ObjectOrRef,
+                obj: gluon::Ref,
             }
 
             impl gluon::Convertable for #name {
-                fn write<'a, 'b: 'a>(
-                    &'b self,
-                    gluon_data: &mut gluon::DataBuilder<'a>,
-                ) -> Result<(), gluon::WriteError> {
+                fn write(&self, gluon_data: &mut gluon::DataBuilder) -> Result<(), gluon::WriteError> {
                     self.obj.write(gluon_data)
                 }
 
                 fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
-                    let obj = gluon::ObjectOrRef::read(gluon_data)?;
-                    Ok(#name::from_object_or_ref(obj))
+                    let obj = gluon::Ref::read(gluon_data)?;
+                    Ok(#name::from_ref(obj))
                 }
 
-                fn write_owned(self, gluon_data: &mut gluon::DataBuilder<'_>) -> Result<(), gluon::WriteError> {
+                fn write_owned(self, gluon_data: &mut gluon::DataBuilder) -> Result<(), gluon::WriteError> {
                     self.obj.write_owned(gluon_data)
                 }
             }
             impl gluon::Interface for #name {
                 const ID: &'static str = #interface_id;
             }
-            impl #name {
-                #(#methods)*
-                pub fn from_handler<H: #handler_name>(obj: &impl gluon::OwnedObjectRef<H>) -> #name {
-                    #name::from_object_or_ref(gluon::OwnedObjectRef::to_object_or_ref(obj))
-                }
-                #[doc = "only use this when you know the binder ref implements this interface, else the consquences are for you to find out"]
-                pub fn from_object_or_ref(obj: gluon::ObjectOrRef) -> #name {
+            #[doc = "Carries the per-interface bound for [`gluon::RefExt`]'s handler constructors: only a handler implementing this interface's handler trait can be passed to them."]
+            impl<H: #handler_name> gluon::HandledBy<H> for #name {}
+            impl gluon::RefExt for #name {
+                fn from_ref(obj: gluon::Ref) -> #name {
                     #name {
                         obj,
                     }
                 }
             }
-            impl From<#name> for gluon::ObjectOrRef {
+            impl #name {
+                #(#methods)*
+                #[doc = "only use this when you know the ref leads to something implementing this interface, else the consquences are for you to find out"]
+                pub fn from_ref(obj: gluon::Ref) -> #name {
+                    #name {
+                        obj,
+                    }
+                }
+            }
+            impl From<#name> for gluon::Ref {
                 fn from(value: #name) -> Self {
                     value.obj
                 }
             }
-            impl gluon::ToObjectOrRef for #name {
-                fn to_binder_object_or_ref(&self) -> gluon::ObjectOrRef {
+            impl gluon::ToRef for #name {
+                fn to_ref(&self) -> gluon::Ref {
                     self.obj.clone()
                 }
             }
@@ -940,9 +946,9 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         });
         quote! {
             impl gluon::Convertable for #name {
-                fn write<'a, 'b: 'a>(
-                    &'b self,
-                    gluon_data: &mut gluon::DataBuilder<'a>,
+                fn write(
+                    &self,
+                    gluon_data: &mut gluon::DataBuilder,
                 ) -> Result<(), gluon::WriteError> {
                     #(#writes)*
                     Ok(())
@@ -953,7 +959,7 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
                     Ok(#name {#(#field_names,)*})
                 }
 
-                fn write_owned(self, gluon_data: &mut gluon::DataBuilder<'_>) -> Result<(), gluon::WriteError> {
+                fn write_owned(self, gluon_data: &mut gluon::DataBuilder) -> Result<(), gluon::WriteError> {
                     #(#writes_owned)*
                     Ok(())
                 }
@@ -1095,9 +1101,9 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
         });
         quote! {
             impl gluon::Convertable for #enum_name {
-                fn write<'a, 'b: 'a>(
-                    &'b self,
-                    gluon_data: &mut gluon::DataBuilder<'a>,
+                fn write(
+                    &self,
+                    gluon_data: &mut gluon::DataBuilder,
                 ) -> Result<(), gluon::WriteError> {
                     match self {
                         #(#write_variants)*
@@ -1112,7 +1118,7 @@ pub fn gen_enum(def: &EnumDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
                     })
                 }
 
-                fn write_owned(self, gluon_data: &mut gluon::DataBuilder<'_>) -> Result<(), gluon::WriteError> {
+                fn write_owned(self, gluon_data: &mut gluon::DataBuilder) -> Result<(), gluon::WriteError> {
                     match self {
                         #(#write_owned_variants)*
                     };
@@ -1232,7 +1238,7 @@ pub fn gen_type(def: &Type, gen_ctx: &GenCtx) -> proc_macro2::TokenStream {
         Type::Fd => quote! {std::os::fd::OwnedFd},
         Type::Ref(ref_type) => match ref_type {
             Some(custom) => gen_custom_type(custom, gen_ctx),
-            None => quote! {gluon::ObjectOrRef},
+            None => quote! {gluon::Ref},
         },
         Type::Custom(custom) => gen_custom_type(custom, gen_ctx),
         Type::Array(type_def, len) => {

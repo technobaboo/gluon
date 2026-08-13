@@ -5,86 +5,61 @@ use syn::{DeriveInput, parse_macro_input};
 /// Implements `gluon::Handler` for a type that implements a
 /// generated `{Name}Handler` trait (which provides `dispatch_one_way`).
 ///
-/// Equivalent to the `impl_transaction_handler!` declarative macro but usable
-/// as a `#[derive]`.
+/// strong-ipc delivers a message as raw bytes plus descriptors, so this is where the
+/// transaction code is split back off the front of the payload and the peer's
+/// credentials become a `gluon::Context`.
 #[proc_macro_derive(Handler)]
 pub fn derive_handler(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
+    // A message too short to carry a code isn't ours; there is nothing to dispatch on
+    // and no reply object to report to, so it can only be dropped.
     #[cfg(feature = "tracing")]
-    let handle = quote! {
-        async fn handle(
-            self: std::sync::Arc<Self>,
-            _transaction: gluon::Transaction,
-        ) -> gluon::PayloadBuilder<'static> {
-            tracing::warn!(concat!(
-                "Received two way transaction for ",
-                stringify!(#name)
-            ));
-            gluon::PayloadBuilder::new()
-        }
+    let on_malformed = quote! {
+        tracing::error!(
+            error = %gluon_err,
+            concat!("dropped a malformed message for ", stringify!(#name)),
+        );
+        return;
     };
     #[cfg(not(feature = "tracing"))]
-    let handle = quote! {
-        async fn handle(
-            self: std::sync::Arc<Self>,
-            _transaction: gluon::Transaction,
-        ) -> gluon::PayloadBuilder<'static> {
-            gluon::PayloadBuilder::new()
-        }
-    };
+    let on_malformed = quote! { let _ = gluon_err; return; };
 
     #[cfg(feature = "tracing")]
-    let handle_one_way = quote! {
-        async fn handle_one_way(
-            self: std::sync::Arc<Self>,
-            transaction: gluon::Transaction,
-        ) {
-            let gluon_data = gluon::DataReader::from_payload(transaction.payload);
-            _ = self
-                .dispatch_one_way(
-                    transaction.code,
-                    gluon_data,
-                    gluon::Context {
-                        sender_pid: transaction.sender_pid,
-                        sender_euid: transaction.sender_euid,
-                    },
+    let dispatch = quote! {
+        _ = self
+            .dispatch_one_way(gluon_code, gluon_data, gluon::Context::new(creds))
+            .await
+            .inspect_err(|err| {
+                tracing::error!(
+                    concat!("failed to dispatch one_way {} for ", stringify!(#name)),
+                    err
                 )
-                .await
-                .inspect_err(|err| {
-                    tracing::error!(
-                        concat!("failed to dispatch one_way {} for ", stringify!(#name)),
-                        err
-                    )
-                });
-        }
+            });
     };
     #[cfg(not(feature = "tracing"))]
-    let handle_one_way = quote! {
-        async fn handle_one_way(
-            self: std::sync::Arc<Self>,
-            transaction: gluon::Transaction,
-        ) {
-            let gluon_data = gluon::DataReader::from_payload(transaction.payload);
-            _ = self
-                .dispatch_one_way(
-                    transaction.code,
-                    gluon_data,
-                    gluon::Context {
-                        sender_pid: transaction.sender_pid,
-                        sender_euid: transaction.sender_euid,
-                    },
-                )
-                .await;
-        }
+    let dispatch = quote! {
+        _ = self
+            .dispatch_one_way(gluon_code, gluon_data, gluon::Context::new(creds))
+            .await;
     };
 
     quote! {
         impl #impl_generics gluon::Handler for #name #ty_generics #where_clause {
-            #handle
-            #handle_one_way
+            async fn handle(
+                &self,
+                data: &mut [u8],
+                fds: gluon::FdVec,
+                creds: Option<gluon::UCred>,
+            ) {
+                let (gluon_code, gluon_data) = match gluon::DataReader::from_wire(data, fds) {
+                    Ok(split) => split,
+                    Err(gluon_err) => { #on_malformed }
+                };
+                #dispatch
+            }
         }
     }
     .into()
