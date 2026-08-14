@@ -33,13 +33,12 @@
 pub mod primitive_impls;
 pub use gluon_derive::Handler;
 pub use strong_ipc::{
-    BoundNode, FdVec, Handler, MAX_MESSAGE_SIZE, Message, Node, NodeError, Ref, UCred, WeakRef,
+    BoundNode, FdVec, Handler, MAX_MESSAGE_SIZE, Message, Node, NodeError, Ref, UCred,
 };
 
 use rustix::process::{RawGid, RawPid, RawUid};
 use std::{
     future::Future,
-    marker::PhantomData,
     os::fd::{BorrowedFd, OwnedFd},
     pin::Pin,
     string::FromUtf8Error,
@@ -212,7 +211,9 @@ pub trait RefExt: Interface + Sized {
     /// The other side of the bootstrap problem: a path is the one name that isn't itself a
     /// capability, so this is how you get a first ref without anyone handing you one.
     /// Nothing checks that whatever is listening speaks this interface.
-    fn connect(path: impl AsRef<std::path::Path> + Send) -> impl Future<Output = Result<Self, NodeError>> + Send {
+    fn connect(
+        path: impl AsRef<std::path::Path> + Send,
+    ) -> impl Future<Output = Result<Self, NodeError>> + Send {
         async move { Ok(Self::from_ref(Ref::connect(path).await?)) }
     }
 
@@ -243,15 +244,6 @@ pub trait RefExt: Interface + Sized {
         Ok(proxy)
     }
 
-    /// A [`WeakProxy`] to the same node, which does not keep it alive.
-    ///
-    /// What you hold instead of a proxy when holding one would close a loop — a node whose
-    /// child holds a proxy back to it can never be dropped, since a service node's refs
-    /// *are* its lifetime. See [`WeakRef`] for exactly how weak this is.
-    fn downgrade(&self) -> WeakProxy<Self> {
-        WeakProxy::from(self.to_ref().downgrade())
-    }
-
     /// The handler behind this proxy, if it leads to a node in *this* process.
     ///
     /// A proxy a peer handed you is normally opaque — you call its methods and the wire
@@ -273,104 +265,6 @@ pub trait RefExt: Interface + Sized {
         Self: HandledBy<H>,
     {
         self.to_ref().local_handler::<H>()
-    }
-}
-
-/// A proxy you can reach for but are not keeping alive.
-///
-/// The typed form of [`WeakRef`], and the reason it is one generic type rather than a
-/// generated `WeakSpatial` beside every `Spatial`: a proxy is only ever a [`Ref`] plus the
-/// interface it is read at, so weakening it is the same operation for all of them and the
-/// codegen has nothing to say about it. [`RefExt::downgrade`] makes one and
-/// [`WeakProxy::upgrade`] gives the proxy back.
-///
-/// See [`WeakRef`] for what weak means here — it is narrower than "the node is alive", and
-/// the difference matters. In short: this upgrades while something **in this process** is
-/// still holding the proxy up, which is exactly the question a reference cycle asks.
-pub struct WeakProxy<I: Interface> {
-    obj: WeakRef,
-    /// `fn() -> I` rather than `I` so this is `Send`, `Sync` and covariant no matter what
-    /// the interface is — it stands for an interface this can *produce*, and holds none
-    _interface: PhantomData<fn() -> I>,
-}
-
-impl<I: RefExt> WeakProxy<I> {
-    /// A `WeakProxy` that never upgrades, for a field that has to exist first.
-    pub fn new() -> Self {
-        Self {
-            obj: WeakRef::new(),
-            _interface: PhantomData,
-        }
-    }
-
-    /// The proxy, if anything here is still holding it up.
-    pub fn upgrade(&self) -> Option<I> {
-        self.obj.upgrade().map(I::from_ref)
-    }
-
-    /// Could [`WeakProxy::upgrade`] succeed right now?
-    ///
-    /// For logging and assertions; anything acting on the answer should `upgrade` and keep
-    /// what it gets, since the last strong proxy can go between the two calls.
-    pub fn is_live(&self) -> bool {
-        self.obj.is_live()
-    }
-
-    /// The untyped capability underneath, still weak.
-    pub fn as_weak_ref(&self) -> &WeakRef {
-        &self.obj
-    }
-}
-
-impl<I: RefExt> From<WeakRef> for WeakProxy<I> {
-    /// Reads a weak capability at this interface.
-    ///
-    /// The weak counterpart of [`RefExt::from_ref`], and it trusts you the same way:
-    /// nothing checks that the ref leads to something speaking `I`.
-    fn from(obj: WeakRef) -> Self {
-        Self {
-            obj,
-            _interface: PhantomData,
-        }
-    }
-}
-
-impl<I: RefExt> Default for WeakProxy<I> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Hand-written rather than derived: `derive(Clone)` would demand `I: Clone`, which is
-/// beside the point when the interface is only a marker here and never held.
-impl<I: Interface> Clone for WeakProxy<I> {
-    fn clone(&self) -> Self {
-        Self {
-            obj: self.obj.clone(),
-            _interface: PhantomData,
-        }
-    }
-}
-
-/// The same capability identity [`Ref`] and [`WeakRef`] use. Two `WeakProxy`s are equal
-/// when they name one socket; the interface plays no part, since it is a reading of that
-/// socket and not a property of it.
-impl<I: Interface> PartialEq for WeakProxy<I> {
-    fn eq(&self, other: &Self) -> bool {
-        self.obj == other.obj
-    }
-}
-impl<I: Interface> Eq for WeakProxy<I> {}
-
-impl<I: Interface> std::hash::Hash for WeakProxy<I> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.obj.hash(state);
-    }
-}
-
-impl<I: Interface> std::fmt::Debug for WeakProxy<I> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "WeakProxy<{}>({:?})", I::ID, self.obj)
     }
 }
 

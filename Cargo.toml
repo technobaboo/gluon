@@ -8,9 +8,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
-# path until the `Debug for Ref`/`Debug for Node` impls land upstream, then flip back
-strong-ipc = { path = "../strong-ipc" }
-# strong-ipc = { git = "https://github.com/technobaboo/strong-ipc" }
+strong-ipc = { git = "https://github.com/technobaboo/strong-ipc" }
 gluon-codegen = { path = "./codegen-rust" }
 gluon-parser = { path = "./parser" }
 gluon = { path = "./wire" }

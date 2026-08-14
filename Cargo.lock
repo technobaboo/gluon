@@ -578,6 +578,7 @@ dependencies = [
 [[package]]
 name = "strong-ipc"
 version = "0.1.0"
+source = "git+https://github.com/technobaboo/strong-ipc#cd411c8eb3efbe18925f8e0f8810c68973a2e0b7"
 dependencies = [
  "dashmap",
  "rustix",
