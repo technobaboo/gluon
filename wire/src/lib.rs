@@ -33,7 +33,7 @@
 pub mod primitive_impls;
 pub use gluon_derive::Handler;
 pub use strong_ipc::{
-    BoundNode, FdVec, Handler, MAX_MESSAGE_SIZE, Message, Node, NodeError, Ref, UCred,
+    FdVec, Handler, MAX_MESSAGE_SIZE, Message, Node, NodeError, Ref, RefFsBinding, UCred,
 };
 
 use rustix::process::{RawGid, RawPid, RawUid};
@@ -206,7 +206,7 @@ pub trait RefExt: Interface + Sized {
     /// else the consequences are for you to find out.
     fn from_ref(obj: Ref) -> Self;
 
-    /// Connects to the [`BoundNode`] listening at `path`.
+    /// Connects to the [`RefFsBinding`] listening at `path`.
     ///
     /// The other side of the bootstrap problem: a path is the one name that isn't itself a
     /// capability, so this is how you get a first ref without anyone handing you one.
