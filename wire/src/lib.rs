@@ -192,7 +192,7 @@ impl<H: Handler> IntoHandler<H> for Arc<H> {
 pub trait HandledBy<H: Handler>: Interface {}
 
 /// Everything you can do with an interface's proxy besides call its methods: reach a node
-/// that already exists, or put a handler behind a new one.
+/// that already exists, put a handler behind a new one, or publish one at a path.
 ///
 /// The handler constructors take [`IntoHandler`], so a handler you already share elsewhere
 /// goes in as the `Arc` and one you don't goes in bare, and they bound `H` by
@@ -215,6 +215,21 @@ pub trait RefExt: Interface + Sized {
         path: impl AsRef<std::path::Path> + Send,
     ) -> impl Future<Output = Result<Self, NodeError>> + Send {
         async move { Ok(Self::from_ref(Ref::connect(path).await?)) }
+    }
+
+    /// Publishes this proxy at `path`, so anyone who can open it gets a ref by
+    /// [`RefExt::connect`]ing.
+    ///
+    /// The other half of the bootstrap problem, and the only door into a process that
+    /// isn't already a capability: every connection served here hands out a ref to the
+    /// same node, and nothing about the path is checked beyond the filesystem's own
+    /// permissions.
+    ///
+    /// Keep the binding — dropping it stops the accept loop, and refs already handed out
+    /// stay live. It does not unlink `path`, so a stale socket file left by a killed
+    /// process reports [`std::io::ErrorKind::AddrInUse`] until something removes it.
+    fn bind(&self, path: impl AsRef<std::path::Path>) -> Result<RefFsBinding, NodeError> {
+        Ok(RefFsBinding::new(self.to_ref(), path)?)
     }
 
     /// Runs `handler` on a new node reachable through the returned proxy.

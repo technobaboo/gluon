@@ -156,12 +156,14 @@ mod tests {
     }
 
     /// The bootstrap path: a proxy built from a filesystem path rather than from a ref
-    /// somebody handed us, talking to a `BoundNode` on the other end.
+    /// somebody handed us, talking to a node published there with [`RefExt::bind`].
     #[tokio::test]
     async fn connect_reaches_a_bound_node() {
         let path = std::env::temp_dir().join(format!("gluon-connect-{}.sock", process::id()));
+        // the binding never unlinks, so a run killed before its drop leaves this behind
         let _ = std::fs::remove_file(&path);
-        let _bound = gluon::BoundNode::bind(&path, TestHandlerImpl::default()).unwrap();
+        let (_node, bound) = test_node();
+        let _binding = bound.bind(&path).unwrap();
 
         let proxy = Test::connect(&path).await.unwrap();
         assert_eq!(
