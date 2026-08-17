@@ -10,6 +10,11 @@ pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
             proxy: None,
         },
         gluon::ExternalGluonType {
+            name: "FdTestStruct",
+            supported_derives: gluon::Derives::from_bits_truncate(0u32),
+            proxy: None,
+        },
+        gluon::ExternalGluonType {
             name: "Palette",
             supported_derives: gluon::Derives::from_bits_truncate(31u32),
             proxy: None,
@@ -84,6 +89,48 @@ impl gluon::Convertable for TestStruct {
             let __w: super::types::proxied::Vec3 = self.position.into();
             __w.write_owned(gluon_data)?;
         }
+        Ok(())
+    }
+}
+///test struct
+#[derive(Debug)]
+pub struct FdTestStruct {
+    pub fd_1: std::os::fd::OwnedFd,
+    pub fd_2: std::os::fd::OwnedFd,
+    pub fd_3: std::os::fd::OwnedFd,
+    pub fds: Vec<std::os::fd::OwnedFd>,
+}
+impl gluon::Convertable for FdTestStruct {
+    fn write(
+        &self,
+        gluon_data: &mut gluon::DataBuilder,
+    ) -> Result<(), gluon::WriteError> {
+        self.fd_1.write(gluon_data)?;
+        self.fd_2.write(gluon_data)?;
+        self.fd_3.write(gluon_data)?;
+        self.fds.write(gluon_data)?;
+        Ok(())
+    }
+    fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
+        let fd_1 = gluon::Convertable::read(gluon_data)?;
+        let fd_2 = gluon::Convertable::read(gluon_data)?;
+        let fd_3 = gluon::Convertable::read(gluon_data)?;
+        let fds = gluon::Convertable::read(gluon_data)?;
+        Ok(FdTestStruct {
+            fd_1,
+            fd_2,
+            fd_3,
+            fds,
+        })
+    }
+    fn write_owned(
+        self,
+        gluon_data: &mut gluon::DataBuilder,
+    ) -> Result<(), gluon::WriteError> {
+        self.fd_1.write_owned(gluon_data)?;
+        self.fd_2.write_owned(gluon_data)?;
+        self.fd_3.write_owned(gluon_data)?;
+        self.fds.write_owned(gluon_data)?;
         Ok(())
     }
 }

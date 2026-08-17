@@ -23,6 +23,14 @@ struct TestStruct {
 	position: types::Vec3,
 }
 
+/// test struct
+struct FdTestStruct {
+	fd1: Fd,
+	fd2: Fd,
+	fd3: Fd,
+	fds: Vec<Fd>,
+}
+
 /// Test enum
 enum TestEnum {
 	TestStruct {

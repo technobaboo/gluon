@@ -398,7 +398,7 @@ pub fn gen_interface(
         // call, then convert return values back to wire types for the response.
         let methods_dispatch = def.methods.iter().enumerate().map(|(i, method)| {
             let i = i + 8;
-            let names = method.params.iter().map(|v| format_ident!("param_{}", v.name)).collect::<Vec<_>>();
+            let names = method.params.iter().map(|v| format_ident!("param_{}", v.name.to_case(Case::Snake))).collect::<Vec<_>>();
             // For proxy params, read wire value into a separate __wire_ var so it can be
             // traced (Debug) before converting to the proxy type (unknown Debug).
             let params_reads = names.iter().zip(method.params.iter()).map(|(var, param)| {
@@ -906,10 +906,10 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
         let field_names = def
             .fields
             .iter()
-            .map(|v| format_ident!("{}", v.name))
+            .map(|v| format_ident!("{}", v.name.to_case(Case::Snake)))
             .collect::<Vec<_>>();
         let writes = def.fields.iter().map(|f| {
-            let fname = format_ident!("{}", f.name);
+            let fname = format_ident!("{}", f.name.to_case(Case::Snake));
             if type_has_proxy(&f.ty, gen_ctx) {
                 let wire_ty = gen_type(&f.ty, gen_ctx);
                 let conv = gen_pub_to_wire(&f.ty, quote! { self.#fname.clone() }, gen_ctx);
@@ -919,7 +919,7 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
             }
         });
         let reads = def.fields.iter().map(|f| {
-            let fname = format_ident!("{}", f.name);
+            let fname = format_ident!("{}", f.name.to_case(Case::Snake));
             if type_has_proxy(&f.ty, gen_ctx) {
                 let wire_ty = gen_type(&f.ty, gen_ctx);
                 let pub_ty = gen_public_type(&f.ty, gen_ctx);
@@ -935,7 +935,7 @@ pub fn gen_struct(def: &StructDef, gen_ctx: &GenCtx) -> proc_macro2::TokenStream
             }
         });
         let writes_owned = def.fields.iter().map(|f| {
-            let fname = format_ident!("{}", f.name);
+            let fname = format_ident!("{}", f.name.to_case(Case::Snake));
             if type_has_proxy(&f.ty, gen_ctx) {
                 let wire_ty = gen_type(&f.ty, gen_ctx);
                 let conv = gen_pub_to_wire(&f.ty, quote! { self.#fname }, gen_ctx);
