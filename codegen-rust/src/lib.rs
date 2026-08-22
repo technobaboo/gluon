@@ -388,6 +388,7 @@ pub fn gen_interface(
 ) -> proc_macro2::TokenStream {
     let name = format_ident!("{}", interface_name.to_case(Case::Pascal));
     let handler_name = format_ident!("{name}Handler");
+    let local_name = format_ident!("{name}Local");
     let interface_id = format!(
         "{}.{}",
         gen_ctx.curr_protocol.name,
@@ -763,6 +764,14 @@ pub fn gen_interface(
             }
             #[doc = "Carries the per-interface bound for [`gluon::RefExt`]'s handler constructors: only a handler implementing this interface's handler trait can be passed to them."]
             impl<H: #handler_name> gluon::HandledBy<H> for #name {}
+            #[doc = "A proxy this process made, carrying the handler behind it — see [`gluon::LocalRef`]. Handed back by [`gluon::RefExt::new_node`] and [`gluon::RefExt::new_service`]."]
+            pub type #local_name<H> = gluon::LocalRef<#name, H>;
+            #[doc = "Drops the handler share and keeps the proxy, so a [`gluon::LocalRef`] goes anywhere this proxy does — including the `impl Into<Self>` parameters generated for typed refs."]
+            impl<H: #handler_name> From<#local_name<H>> for #name {
+                fn from(value: #local_name<H>) -> #name {
+                    value.into_proxy()
+                }
+            }
             impl gluon::RefExt for #name {
                 fn from_ref(obj: gluon::Ref) -> #name {
                     #name {

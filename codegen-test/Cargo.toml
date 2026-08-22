@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-gluon.workspace = true
+# `local-handlers` so the tests can exercise `RefExt::local_from_ref` / `as_local`, the
+# path back from a ref that came in off the wire to the handler behind it
+gluon = { workspace = true, features = ["local-handlers"] }
 tracing = "0.1.44"
 
 [dev-dependencies]

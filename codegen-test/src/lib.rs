@@ -118,17 +118,47 @@ impl TestHandler for TestHandlerImpl {
     }
 }
 
+/// A second handler for the same interface, so a test can ask a proxy for the *wrong*
+/// handler type and get `None` rather than a compile error — the `HandledBy` bound admits
+/// both of these, and only the registry lookup can tell them apart.
+#[cfg(test)]
+#[derive(Debug, gluon::Handler)]
+struct SecondTestHandler;
+
+#[cfg(test)]
+impl TestHandler for SecondTestHandler {
+    async fn quit(&self, _ctx: Context) {}
+    async fn ping(&self, _ctx: Context) {}
+    async fn echo(&self, _ctx: Context, input: MyTestEnum) -> MyTestEnum {
+        input
+    }
+    async fn echo_ref(&self, _ctx: Context, input: protocol::test::Test) -> protocol::test::Test {
+        input
+    }
+    async fn echo_untyped_ref(&self, _ctx: gluon::Context, input: gluon::Ref) -> gluon::Ref {
+        input
+    }
+    async fn get_position(&self, _ctx: Context) -> MyVec3 {
+        MyVec3 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gluon::RefExt;
-    use protocol::test::Test;
+    use gluon::{Liveness, RefExt, ToRef};
+    use protocol::test::{Test, TestLocal};
+    use std::sync::Arc;
 
-    /// Stands up a handler and the proxy that reaches it.
+    /// Stands up a handler and the [`gluon::LocalRef`] that reaches it.
     ///
-    /// The node comes back alongside the proxy because nothing else holds it: drop it and
-    /// its socket hangs up, so it has to outlive every call made through the proxy.
-    fn test_node() -> (gluon::Node<TestHandlerImpl>, Test) {
+    /// The node comes back alongside it because nothing else holds it: drop it and its
+    /// socket hangs up, so it has to outlive every call made through the proxy.
+    fn test_node() -> (gluon::Node<TestHandlerImpl>, TestLocal<TestHandlerImpl>) {
         Test::new_node(TestHandlerImpl::default()).unwrap()
     }
 
@@ -136,13 +166,15 @@ mod tests {
     /// buys over a second `_raw` constructor.
     #[tokio::test]
     async fn a_shared_handler_needs_no_second_constructor() {
-        let handler = std::sync::Arc::new(TestHandlerImpl::default());
-        let (_node, proxy) = Test::new_node(handler.clone()).unwrap();
-        proxy.ping().await.unwrap();
+        let handler = Arc::new(TestHandlerImpl::default());
+        let (_node, local) = Test::new_node(handler.clone()).unwrap();
+        local.proxy().ping().await.unwrap();
         assert_eq!(
             handler.last_ping_pid.load(Ordering::Relaxed),
             process::id() as i32
         );
+        // the same handler, reached through the `LocalRef` rather than the variable
+        assert!(Arc::ptr_eq(local.handler(), &handler));
     }
 
     /// A service keeps serving with no node held anywhere, which is the whole point of it
@@ -150,9 +182,14 @@ mod tests {
     /// return type.
     #[tokio::test]
     async fn a_service_serves_without_a_node_to_hold() {
-        let proxy = Test::new_service(TestHandlerImpl::default()).unwrap();
-        proxy.ping().await.unwrap();
-        assert!(gluon::Liveness::alive(&proxy));
+        let local = Test::new_service(TestHandlerImpl::default()).unwrap();
+        local.proxy().ping().await.unwrap();
+        assert!(local.alive());
+        // and the handler is still right there, with no node held anywhere
+        assert_eq!(
+            local.last_ping_pid.load(Ordering::Relaxed),
+            process::id() as i32
+        );
     }
 
     /// The bootstrap path: a proxy built from a filesystem path rather than from a ref
@@ -163,7 +200,7 @@ mod tests {
         // the binding never unlinks, so a run killed before its drop leaves this behind
         let _ = std::fs::remove_file(&path);
         let (_node, bound) = test_node();
-        let _binding = bound.bind(&path).unwrap();
+        let _binding = bound.proxy().bind(&path).unwrap();
 
         let proxy = Test::connect(&path).await.unwrap();
         assert_eq!(
@@ -176,13 +213,112 @@ mod tests {
         );
     }
 
+    // --- LocalRef ---
+
+    /// The point of the whole thing: an object we built reaches its handler with no node
+    /// held, no lookup, and no `Option`.
+    #[tokio::test]
+    async fn local_ref_reaches_its_handler() {
+        let (_node, local) = test_node();
+        local.proxy().ping().await.unwrap();
+        assert_eq!(
+            local.handler().last_ping_pid.load(Ordering::Relaxed),
+            process::id() as i32
+        );
+    }
+
+    /// A `LocalRef` drops into a proxy-typed struct field the same as a proxy does.
+    #[tokio::test]
+    async fn local_ref_fills_a_proxy_typed_field() {
+        let (_node, local) = test_node();
+        let test_struct = protocol::test::TestStruct {
+            string: "nya~".to_string(),
+            id: 7,
+            binder_ref: local.clone().into(),
+            position: MyVec3 {
+                x: 1.0,
+                y: 2.0,
+                z: 3.0,
+            },
+        };
+        assert_eq!(&test_struct.binder_ref, local.proxy());
+    }
+
+    /// Cloning a `LocalRef` clones the `LocalRef`, not the `Arc<H>` it derefs to — the
+    /// trap `strong_ipc::Node` refuses this deref over. Both halves come along.
+    #[tokio::test]
+    async fn cloning_a_local_ref_yields_a_local_ref() {
+        let (_node, local) = test_node();
+        let cloned: TestLocal<TestHandlerImpl> = local.clone();
+        assert_eq!(cloned.proxy(), local.proxy());
+        assert!(Arc::ptr_eq(cloned.handler(), local.handler()));
+    }
+
+    /// A service's `LocalRef` keeps serving with no node held anywhere, and keeps the
+    /// handler reachable for as long as it lives.
+    #[tokio::test]
+    async fn a_service_local_ref_outlives_its_node() {
+        let local = Test::new_service(TestHandlerImpl::default()).unwrap();
+        assert!(local.alive());
+        local.proxy().ping().await.unwrap();
+        assert_eq!(
+            local.handler().last_ping_pid.load(Ordering::Relaxed),
+            process::id() as i32
+        );
+    }
+
+    /// The recovery path: a ref sent out and handed back is recognised on arrival, and
+    /// `local_from_ref` reuses that very ref as the proxy rather than building a second
+    /// one beside it.
+    #[tokio::test]
+    async fn local_from_ref_recovers_a_ref_off_the_wire() {
+        let (_node, local) = test_node();
+        let returned: Test = local.proxy().echo_ref(local.clone()).await.unwrap();
+
+        let recovered = Test::local_from_ref(returned.to_ref())
+            .expect("a ref to our own live node, behind the handler we built");
+        let recovered: TestLocal<TestHandlerImpl> = recovered;
+
+        assert!(Arc::ptr_eq(recovered.handler(), local.handler()));
+        assert_eq!(recovered.proxy(), local.proxy());
+    }
+
+    /// `as_local` is the same answer for a proxy already in hand.
+    #[tokio::test]
+    async fn as_local_recovers_from_a_proxy() {
+        let (_node, local) = test_node();
+        let returned: Test = local.proxy().echo_ref(local.clone()).await.unwrap();
+
+        let recovered = returned.as_local::<TestHandlerImpl>().unwrap();
+        assert!(Arc::ptr_eq(recovered.handler(), local.handler()));
+    }
+
+    /// The `None` paths. A ref from another process isn't reachable from a unit test, but
+    /// a dead node and a mismatched handler type both are, and neither is distinguished —
+    /// which is the documented contract.
+    #[tokio::test]
+    async fn local_from_ref_is_none_when_it_cannot_hand_the_handler_over() {
+        // wrong `H`: a live node of ours, but a different handler behind this interface
+        let (_other_node, other) = Test::new_node(SecondTestHandler).unwrap();
+        assert!(other.proxy().as_local::<TestHandlerImpl>().is_none());
+        // ...and asking for the handler it actually has still works
+        assert!(other.proxy().as_local::<SecondTestHandler>().is_some());
+
+        // dead node: the ref outlives the node it led to
+        let (node, local) = test_node();
+        let orphan = local.to_ref();
+        drop(node);
+        local.death_notification().await;
+        assert!(Test::local_from_ref::<TestHandlerImpl>(orphan).is_none());
+    }
+
     // --- over a real socket ---
 
     #[tokio::test]
     async fn value_return_round_trips() {
-        let (_node, proxy) = test_node();
+        let (_node, local) = test_node();
         assert_eq!(
-            proxy.get_position().await.unwrap(),
+            local.proxy().get_position().await.unwrap(),
             MyVec3 {
                 x: 1.0,
                 y: 2.0,
@@ -193,8 +329,9 @@ mod tests {
 
     #[tokio::test]
     async fn enum_param_and_return_round_trip() {
-        let (_node, proxy) = test_node();
-        let echoed = proxy
+        let (_node, local) = test_node();
+        let echoed = local
+            .proxy()
             .echo(MyTestEnum(protocol::test::proxied::TestEnum::EmptyVariant))
             .await
             .unwrap();
@@ -208,30 +345,33 @@ mod tests {
     /// strong-ipc's registry is what makes that compare equal to the one we sent.
     #[tokio::test]
     async fn ref_identity_survives_a_round_trip() {
-        let (_node, proxy) = test_node();
-        let (_other_node, other_proxy) = test_node();
+        let (_node, local) = test_node();
+        let (_other_node, other) = test_node();
 
-        let sent = gluon::ToRef::to_ref(&other_proxy);
-        let returned = proxy.echo_untyped_ref(&other_proxy).await.unwrap();
+        // `&impl ToRef` takes the `LocalRef` directly — no unwrapping to the proxy
+        let sent = other.to_ref();
+        let returned = local.proxy().echo_untyped_ref(&other).await.unwrap();
         assert_eq!(returned, sent);
     }
 
     /// The typed variant of the same trip, through the proxy type rather than a bare ref.
     #[tokio::test]
     async fn typed_ref_round_trips() {
-        let (_node, proxy) = test_node();
-        let returned = proxy.echo_ref(proxy.clone()).await.unwrap();
-        assert_eq!(returned, proxy);
+        let (_node, local) = test_node();
+        // `impl Into<Test>` takes the `LocalRef` too, through the generated `From` impl
+        let returned = local.proxy().echo_ref(local.clone()).await.unwrap();
+        assert_eq!(&returned, local.proxy());
     }
 
     /// `Context` is filled from `SO_PASSCRED`; over a socketpair to ourselves that has
     /// to come back as this process.
     #[tokio::test]
     async fn context_carries_peer_credentials() {
-        let (node, proxy) = test_node();
-        proxy.ping().await.unwrap();
+        let (_node, local) = test_node();
+        local.proxy().ping().await.unwrap();
+        // read straight off the handler through the `Deref`, no `node.handler()` needed
         assert_eq!(
-            node.handler().last_ping_pid.load(Ordering::Relaxed),
+            local.last_ping_pid.load(Ordering::Relaxed),
             process::id() as i32
         );
     }
@@ -240,11 +380,11 @@ mod tests {
     /// it report a gone peer rather than hanging.
     #[tokio::test]
     async fn dropping_the_node_kills_the_ref() {
-        let (node, proxy) = test_node();
-        assert!(gluon::Liveness::alive(&proxy));
+        let (node, local) = test_node();
+        assert!(local.alive());
         drop(node);
-        gluon::Liveness::death_notification(&proxy).await;
-        assert!(!gluon::Liveness::alive(&proxy));
+        local.death_notification().await;
+        assert!(!local.alive());
     }
 
     // Palette.primary/secondary are MyColor (proxy), not the wire Color — verified by type.

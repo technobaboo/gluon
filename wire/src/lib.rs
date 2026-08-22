@@ -29,6 +29,15 @@
 //! A `Node` deliberately holds no `Ref` to itself, so [`Node::new`] hands both back and
 //! generated [`RefExt`] impls pass the ref straight into a proxy. Keep the node:
 //! dropping it hangs its socket up and every ref to it goes dead.
+//!
+//! One thing binder had that a bare `Ref` cannot say is which side of an object you are
+//! on. A generated proxy is a `Ref` and nothing else, so a node this process built and one
+//! a peer handed us are the same type — right for the wire, lossy for the builder, who
+//! knew the handler and then had nowhere to put it. [`LocalRef`] is that place: the proxy
+//! plus the `Arc<H>` behind it, handed back by [`RefExt::new_node`] and
+//! [`RefExt::new_service`], and recovered from a ref that comes back in by
+//! [`RefExt::local_from_ref`]. It is an ergonomic pairing only — nothing about it reaches
+//! the wire, where a `Ref` is still just a `Ref`.
 
 pub mod primitive_impls;
 pub use gluon_derive::Handler;
@@ -39,6 +48,7 @@ pub use strong_ipc::{
 use rustix::process::{RawGid, RawPid, RawUid};
 use std::{
     future::Future,
+    ops::Deref,
     os::fd::{BorrowedFd, OwnedFd},
     pin::Pin,
     string::FromUtf8Error,
@@ -191,6 +201,129 @@ impl<H: Handler> IntoHandler<H> for Arc<H> {
 /// outright.
 pub trait HandledBy<H: Handler>: Interface {}
 
+/// A proxy paired with the handler behind it, for a node made in *this* process.
+///
+/// A plain proxy is a [`Ref`] and nothing else, which is the whole truth about one a peer
+/// handed us but throws away what we knew about one we built ourselves. This keeps both:
+/// the proxy to send through, and the `Arc<H>` the node is already feeding. No lookup, no
+/// `Option` — the pairing is a fact of construction rather than something to go and check.
+///
+/// The [`HandledBy<H>`] bound is what makes that pairing honest. It is the same bound that
+/// decides what may be *put* behind an interface, so a `LocalRef<Test, H>` can only exist
+/// for an `H` answering `Test`'s methods — checked when it is built, not downcast when it
+/// is read.
+///
+/// [`Deref`]s to the `Arc<H>`, so the handler's own methods and fields are reached bare and
+/// the interface's go through [`LocalRef::proxy`]. Unlike [`Node`], which refuses the same
+/// deref precisely because `node.clone()` would silently hand back a share of its handler,
+/// that is safe here: `LocalRef` has its own `Clone`, and an inherent impl wins over a
+/// deref, so `local.clone()` is another `LocalRef`.
+///
+/// **Do not store one of these in the handler it points at.** `Arc<H>` → `LocalRef` →
+/// `Arc<H>` is a cycle and the handler never drops. Keep the bare proxy for a
+/// self-reference — [`LocalRef::proxy`] hands it over.
+pub struct LocalRef<I, H> {
+    proxy: I,
+    handler: Arc<H>,
+}
+
+impl<I: RefExt + HandledBy<H>, H: Handler> LocalRef<I, H> {
+    /// Pairs a proxy with the handler behind it.
+    ///
+    /// Nothing here checks that `proxy` actually leads to `handler` — the constructors on
+    /// [`RefExt`] are the ones that know, and this is how they say so.
+    pub fn new(proxy: I, handler: Arc<H>) -> Self {
+        Self { proxy, handler }
+    }
+
+    /// The handler behind this proxy.
+    ///
+    /// No lookup and no `Option`, unlike [`RefExt::local_handler`]: this is the `Arc` the
+    /// node is running, carried here since it was built.
+    pub fn handler(&self) -> &Arc<H> {
+        &self.handler
+    }
+
+    /// The proxy, for calling this interface's methods and for anywhere a peer's ref goes.
+    pub fn proxy(&self) -> &I {
+        &self.proxy
+    }
+
+    /// Drops the handler share and keeps the proxy.
+    pub fn into_proxy(self) -> I {
+        self.proxy
+    }
+}
+
+/// To the handler, as binderbinder's `BinderObjectRef` did — see the type's own docs for
+/// why this is safe here and not on [`Node`].
+impl<I: RefExt + HandledBy<H>, H: Handler> Deref for LocalRef<I, H> {
+    type Target = Arc<H>;
+    fn deref(&self) -> &Arc<H> {
+        &self.handler
+    }
+}
+
+/// Hand-written rather than derived, and rebuilding the proxy from its ref rather than
+/// cloning it: that costs the same `Arc` bump and spares [`Interface`] a `Clone` supertrait
+/// it would otherwise need for no other reason.
+impl<I: RefExt + HandledBy<H>, H: Handler> Clone for LocalRef<I, H> {
+    fn clone(&self) -> Self {
+        Self {
+            proxy: I::from_ref(self.proxy.to_ref()),
+            handler: self.handler.clone(),
+        }
+    }
+}
+
+/// Prints the proxy, since the handler is not obliged to be `Debug` and the ref is the
+/// identity anyway.
+impl<I: RefExt + HandledBy<H> + std::fmt::Debug, H: Handler> std::fmt::Debug for LocalRef<I, H> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalRef")
+            .field("proxy", &self.proxy)
+            .finish_non_exhaustive()
+    }
+}
+
+/// So a `LocalRef` goes straight into an untyped-ref parameter or [`DataBuilder::write_ref`].
+impl<I: RefExt + HandledBy<H>, H: Handler> ToRef for LocalRef<I, H> {
+    fn to_ref(&self) -> Ref {
+        self.proxy.to_ref()
+    }
+}
+
+/// The generated `From<LocalRef<Proxy, H>> for Proxy` is the one that feeds the
+/// `impl Into<Proxy>` parameters; this is the untyped end of the same road.
+impl<I: RefExt + HandledBy<H>, H: Handler> From<LocalRef<I, H>> for Ref {
+    fn from(value: LocalRef<I, H>) -> Ref {
+        value.proxy.to_ref()
+    }
+}
+
+impl<I: RefExt + HandledBy<H>, H: Handler> Liveness for LocalRef<I, H> {
+    fn alive(&self) -> bool {
+        Liveness::alive(&self.proxy.to_ref())
+    }
+    fn death_notification(&self) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        Liveness::death_notification(&self.proxy.to_ref())
+    }
+}
+
+/// Identity is the proxy's, which is the ref's — the handler share says nothing about
+/// which node this is.
+impl<I: RefExt + HandledBy<H> + PartialEq, H: Handler> PartialEq for LocalRef<I, H> {
+    fn eq(&self, other: &Self) -> bool {
+        self.proxy == other.proxy
+    }
+}
+impl<I: RefExt + HandledBy<H> + Eq, H: Handler> Eq for LocalRef<I, H> {}
+impl<I: RefExt + HandledBy<H> + std::hash::Hash, H: Handler> std::hash::Hash for LocalRef<I, H> {
+    fn hash<S: std::hash::Hasher>(&self, state: &mut S) {
+        self.proxy.hash(state);
+    }
+}
+
 /// Everything you can do with an interface's proxy besides call its methods: reach a node
 /// that already exists, put a handler behind a new one, or publish one at a path.
 ///
@@ -232,31 +365,40 @@ pub trait RefExt: Interface + Sized {
         Ok(RefFsBinding::new(self.to_ref(), path)?)
     }
 
-    /// Runs `handler` on a new node reachable through the returned proxy.
+    /// Runs `handler` on a new node reached through the returned [`LocalRef`].
     ///
-    /// Keep the node. It *is* the node, and dropping it hangs its socket up, so the proxy
-    /// returned beside it goes dead. Use [`Self::new_service`] when you would rather the
-    /// refs decided that.
-    fn new_node<H: Handler>(handler: impl IntoHandler<H>) -> Result<(Node<H>, Self), NodeError>
+    /// A [`LocalRef`] rather than a bare proxy because this is the one call that *knows*
+    /// what is behind the ref it hands back — throwing that away here is what forced every
+    /// caller to either carry the `Arc<H>` in a second variable or go and look it up again
+    /// with [`Self::local_handler`].
+    ///
+    /// Keep the node. It *is* the node, and dropping it hangs its socket up, so the
+    /// `LocalRef` returned beside it goes dead — it holds a share of the handler, but that
+    /// keeps the handler alive, not the node. Use [`Self::new_service`] when you would
+    /// rather the refs decided that.
+    fn new_node<H: Handler>(
+        handler: impl IntoHandler<H>,
+    ) -> Result<(Node<H>, LocalRef<Self, H>), NodeError>
     where
         Self: HandledBy<H>,
     {
         let (node, node_ref) = Node::new_raw(handler.into_handler())?;
-        Ok((node, Self::from_ref(node_ref)))
+        let local = LocalRef::new(Self::from_ref(node_ref), node.handler().clone());
+        Ok((node, local))
     }
 
     /// [`Self::new_node`] for a handler nothing is going to hold onto.
     ///
     /// Hands the node's lifetime straight to its refs through [`Node::to_service`], so
-    /// there is no node to keep and the proxy is the whole result. It lives until the last
-    /// ref to it goes, and there is no getting it back to stop it earlier.
-    fn new_service<H: Handler>(handler: impl IntoHandler<H>) -> Result<Self, NodeError>
+    /// there is no node to keep and the [`LocalRef`] is the whole result. It lives until
+    /// the last ref to it goes, and there is no getting it back to stop it earlier.
+    fn new_service<H: Handler>(handler: impl IntoHandler<H>) -> Result<LocalRef<Self, H>, NodeError>
     where
         Self: HandledBy<H>,
     {
-        let (node, proxy) = Self::new_node(handler)?;
+        let (node, local) = Self::new_node(handler)?;
         node.to_service();
-        Ok(proxy)
+        Ok(local)
     }
 
     /// The handler behind this proxy, if it leads to a node in *this* process.
@@ -280,6 +422,35 @@ pub trait RefExt: Interface + Sized {
         Self: HandledBy<H>,
     {
         self.to_ref().local_handler::<H>()
+    }
+
+    /// [`Self::local_handler`], but the ref you hand in becomes the proxy instead of being
+    /// dropped on the floor.
+    ///
+    /// The lookup needs a ref and so does the proxy, so this is the same one call with
+    /// nothing thrown away: `obj` moves into the [`LocalRef`] rather than being cloned back
+    /// out of it afterwards. What comes back can be *called* as well as read from, which is
+    /// the difference from a bare `Arc<H>`.
+    ///
+    /// `None` means what it always did — the ref leads to another process, its node is
+    /// gone, or it is some other `H` entirely.
+    #[cfg(feature = "local-handlers")]
+    fn local_from_ref<H: Handler>(obj: Ref) -> Option<LocalRef<Self, H>>
+    where
+        Self: HandledBy<H>,
+    {
+        let handler = obj.local_handler::<H>()?;
+        Some(LocalRef::new(Self::from_ref(obj), handler))
+    }
+
+    /// [`Self::local_from_ref`] for a proxy you are already holding — the typed answer to
+    /// "is this one of mine?" for a ref that came back in off the wire.
+    #[cfg(feature = "local-handlers")]
+    fn as_local<H: Handler>(&self) -> Option<LocalRef<Self, H>>
+    where
+        Self: HandledBy<H>,
+    {
+        Self::local_from_ref(self.to_ref())
     }
 }
 
