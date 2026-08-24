@@ -668,8 +668,8 @@ pub enum SendError {
     Full,
     #[error("The peer is gone")]
     Closed,
-    #[error("Payload is over the {MAX_MESSAGE_SIZE} byte limit")]
-    TooLarge,
+    #[error("Payload is {size} bytes, over the {MAX_MESSAGE_SIZE} byte limit")]
+    TooLarge { size: usize },
     #[error("Could not create the reply object: {0}")]
     Node(#[from] NodeError),
 }
@@ -677,7 +677,9 @@ impl From<TrySendError> for SendError {
     fn from(err: TrySendError) -> Self {
         match err {
             TrySendError::Full(_) => SendError::Full,
-            TrySendError::TooLarge(_) => SendError::TooLarge,
+            TrySendError::TooLarge(m) => SendError::TooLarge {
+                size: m.data().len(),
+            },
             TrySendError::Closed(_) => SendError::Closed,
         }
     }
