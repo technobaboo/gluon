@@ -2,7 +2,7 @@ use crate::{LocalProtocol, ModuleExternalProtocol, TypeProxy, gen_module};
 use convert_case::{Case, Casing};
 use gluon::Derives;
 use gluon_parser::parse_idl;
-use std::{fs, path::Path};
+use std::{fs, io::ErrorKind, path::Path};
 
 /// Generates each module into a separate file within a folder, with a `mod.rs` re-exporting all modules
 pub fn gen_multiple_modules(
@@ -59,7 +59,11 @@ pub fn gen_multiple_modules(
             tracing,
         );
         let str = prettyplease::unparse(&syn::parse2(module).unwrap());
-        fs::write(output_dir.join(format!("{mod_name}.rs")), str).unwrap();
+        if let Err(err) = fs::write(output_dir.join(format!("{mod_name}.rs")), str)
+            && err.kind() == ErrorKind::PermissionDenied
+        {
+            return;
+        };
         mod_names.push(mod_name.clone());
     }
 
@@ -68,7 +72,7 @@ pub fn gen_multiple_modules(
         .iter()
         .map(|name| format!("pub mod {name};\n"))
         .collect();
-    fs::write(output_dir.join("mod.rs"), mod_decls).unwrap();
+    _ = fs::write(output_dir.join("mod.rs"), mod_decls);
 }
 /// Generates a module into a single rust file
 /// this assumes no imports are use in this module
@@ -107,5 +111,5 @@ pub fn gen_single_module(
     );
 
     let str = prettyplease::unparse(&syn::parse2(module).unwrap());
-    fs::write(output_file_path, str).unwrap();
+    _ = fs::write(output_file_path, str);
 }
