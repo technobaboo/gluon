@@ -781,9 +781,25 @@ impl<T> ReplySender<T> {
         transact(&self.callback, REPLY_CODE, payload)
     }
 }
+/// A wrapper for the throwaway node a proxy hands out to receive one reply.
+pub struct ReturnReceiver(Node<ReturnHandler>, mpsc::Receiver<DataReader>);
+impl ReturnReceiver {
+    pub fn new() -> Result<(Self, Ref), SendError> {
+        let (handler, recv) = ReturnHandler::new();
+        let (node, node_ref) = Node::new(handler)?;
+        Ok((Self(node, recv), node_ref))
+    }
+    pub async fn recv(&mut self) -> Result<DataReader, SendError> {
+        tokio::select! {
+            // this unwrap should be fine since we 
+            v = self.1.recv() => { Ok(v.unwrap()) }
+            _ = self.0.death_notification() => { Err(SendError::Closed) }
+        }
+    }
+}
 
 /// The handler behind the throwaway node a proxy hands out to receive one reply.
-pub struct ReturnHandler(mpsc::Sender<DataReader>);
+struct ReturnHandler(mpsc::Sender<DataReader>);
 
 impl std::fmt::Debug for ReturnHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

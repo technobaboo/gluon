@@ -709,17 +709,12 @@ pub fn gen_interface(
                             #(#params_convert)*
                             #proxy_trace
                             let mut gluon_builder = gluon::DataBuilder::new();
-                            let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-                            // `gluon_ret_node` has to stay in scope until the reply lands:
-                            // dropping it hangs its socket up and the callee's reply would
-                            // go nowhere.
-                            let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+                            let (mut gluon_recv, gluon_ret) = gluon::ReturnReceiver::new()?;
                             gluon_builder.write_ref(&gluon_ret)?;
                             #(#params_write)*
                             gluon::transact(&self.obj, #i, gluon_builder)?;
                             // safe since we're also holding the channel sender
                             let mut reader = gluon_recv.recv().await.unwrap();
-                            drop(gluon_ret_node);
                             #(#ret_let_stmts)*
                             #proxy_return_trace
                             Ok(#return_result)

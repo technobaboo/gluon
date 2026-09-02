@@ -265,12 +265,10 @@ impl Test {
     pub async fn ping(&self) -> Result<(), gluon::SendError> {
         tracing::trace!(interface = "Test", method = "ping", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
-        let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        let (mut gluon_recv, gluon_ret) = gluon::ReturnReceiver::new()?;
         gluon_builder.write_ref(&gluon_ret)?;
         gluon::transact(&self.obj, 9u32, gluon_builder)?;
         let mut reader = gluon_recv.recv().await.unwrap();
-        drop(gluon_ret_node);
         tracing::trace!(interface = "Test", method = "ping", "←");
         Ok(())
     }
@@ -281,13 +279,11 @@ impl Test {
         let input: proxied::TestEnum = input.into();
         tracing::trace!(interface = "Test", method = "echo", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
-        let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        let (mut gluon_recv, gluon_ret) = gluon::ReturnReceiver::new()?;
         gluon_builder.write_ref(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
         gluon::transact(&self.obj, 10u32, gluon_builder)?;
         let mut reader = gluon_recv.recv().await.unwrap();
-        drop(gluon_ret_node);
         let __ret_output = {
             let __w: proxied::TestEnum = gluon::Convertable::read(&mut reader)?;
             __w.into()
@@ -305,13 +301,11 @@ impl Test {
         let input: Test = input.into();
         tracing::trace!(interface = "Test", method = "echo_ref", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
-        let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        let (mut gluon_recv, gluon_ret) = gluon::ReturnReceiver::new()?;
         gluon_builder.write_ref(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
         gluon::transact(&self.obj, 11u32, gluon_builder)?;
         let mut reader = gluon_recv.recv().await.unwrap();
-        drop(gluon_ret_node);
         let __ret_output = gluon::Convertable::read(&mut reader)?;
         tracing::trace!(interface = "Test", method = "echo_ref", ? __ret_output, "←");
         Ok(__ret_output)
@@ -323,13 +317,11 @@ impl Test {
         let input: gluon::Ref = gluon::ToRef::to_ref(input);
         tracing::trace!(interface = "Test", method = "echo_untyped_ref", ? input, "→");
         let mut gluon_builder = gluon::DataBuilder::new();
-        let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        let (mut gluon_recv, gluon_ret) = gluon::ReturnReceiver::new()?;
         gluon_builder.write_ref(&gluon_ret)?;
         input.write(&mut gluon_builder)?;
         gluon::transact(&self.obj, 12u32, gluon_builder)?;
         let mut reader = gluon_recv.recv().await.unwrap();
-        drop(gluon_ret_node);
         let __ret_output = gluon::Convertable::read(&mut reader)?;
         tracing::trace!(
             interface = "Test", method = "echo_untyped_ref", ? __ret_output, "←"
@@ -339,12 +331,10 @@ impl Test {
     pub async fn get_position(&self) -> Result<crate::MyVec3, gluon::SendError> {
         tracing::trace!(interface = "Test", method = "get_position", "→");
         let mut gluon_builder = gluon::DataBuilder::new();
-        let (gluon_ret_handler, mut gluon_recv) = gluon::ReturnHandler::new();
-        let (gluon_ret_node, gluon_ret) = gluon::Node::new(gluon_ret_handler)?;
+        let (mut gluon_recv, gluon_ret) = gluon::ReturnReceiver::new()?;
         gluon_builder.write_ref(&gluon_ret)?;
         gluon::transact(&self.obj, 13u32, gluon_builder)?;
         let mut reader = gluon_recv.recv().await.unwrap();
-        drop(gluon_ret_node);
         let __ret_position = {
             let __w: super::types::proxied::Vec3 = gluon::Convertable::read(
                 &mut reader,
