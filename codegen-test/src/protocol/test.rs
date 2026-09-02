@@ -237,8 +237,11 @@ impl gluon::Convertable for Test {
         self.obj.write_owned(gluon_data)
     }
 }
-impl gluon::Interface for Test {
+impl Test {
     const ID: &'static str = "org.gluon.Test.Test";
+}
+impl gluon::Interface for Test {
+    const ID: &'static str = Self::ID;
 }
 ///Carries the per-interface bound for [`gluon::RefExt`]'s handler constructors: only a handler implementing this interface's handler trait can be passed to them.
 impl<H: TestHandler> gluon::HandledBy<H> for Test {}

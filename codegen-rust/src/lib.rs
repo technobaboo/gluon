@@ -763,8 +763,11 @@ pub fn gen_interface(
                     self.obj.write_owned(gluon_data)
                 }
             }
-            impl gluon::Interface for #name {
+            impl #name {
                 const ID: &'static str = #interface_id;
+            }
+            impl gluon::Interface for #name {
+                const ID: &'static str = Self::ID;
             }
             #[doc = "Carries the per-interface bound for [`gluon::RefExt`]'s handler constructors: only a handler implementing this interface's handler trait can be passed to them."]
             impl<H: #handler_name> gluon::HandledBy<H> for #name {}
