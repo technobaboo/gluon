@@ -613,6 +613,15 @@ pub fn gen_interface(
                         Ok(())
                     }
                 }
+
+                fn to_node(self) -> Result<(gluon::Node<Self>, gluon::LocalRef<#name, Self>), gluon::NodeError> where Self: Sized {
+                    use gluon::RefExt;
+                    #name::new_node(self)
+                }
+                fn to_service(self) -> Result<gluon::LocalRef<#name, Self>, gluon::NodeError> where Self: Sized {
+                    use gluon::RefExt;
+                    #name::new_service(self)
+                }
             }
         }
     };

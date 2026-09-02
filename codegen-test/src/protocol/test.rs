@@ -620,6 +620,22 @@ pub trait TestHandler: gluon::Handler + Send + Sync + 'static {
             Ok(())
         }
     }
+    fn to_node(
+        self,
+    ) -> Result<(gluon::Node<Self>, gluon::LocalRef<Test, Self>), gluon::NodeError>
+    where
+        Self: Sized,
+    {
+        use gluon::RefExt;
+        Test::new_node(self)
+    }
+    fn to_service(self) -> Result<gluon::LocalRef<Test, Self>, gluon::NodeError>
+    where
+        Self: Sized,
+    {
+        use gluon::RefExt;
+        Test::new_service(self)
+    }
 }
 pub mod proxied {
     use super::*;
