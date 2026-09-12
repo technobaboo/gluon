@@ -1,7 +1,10 @@
 [package]
-name = "gluon-derive"
+name = "gluon-ipc-derive"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Derive macro for gluon-ipc handlers"
 
 [features]
 tracing = []

@@ -1,17 +1,20 @@
 [package]
-name = "gluon"
+name = "gluon-ipc"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "High level IDL based on tokio, built on top of strong-ipc."
 
 [features]
-tracing = ["gluon-derive/tracing"]
+tracing = ["gluon-ipc-derive/tracing"]
 # `RefExt::local_handler`: reaching the handler behind a proxy that leads to one of our
 # own nodes, for a process that is both ends of an interface
 local-handlers = ["strong-ipc/local-handlers"]
 
 [dependencies]
 strong-ipc.workspace = true
-gluon-derive.workspace = true
+gluon-ipc-derive.workspace = true
 bitflags = "2"
 rustix = { version = "1.1.4", default-features = false, features = ["net"] }
 thiserror = "2.0.18"

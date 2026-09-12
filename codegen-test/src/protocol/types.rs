@@ -1,12 +1,12 @@
 #![allow(unused, clippy::all, private_bounds, private_interfaces)]
-use gluon::Convertable as _;
+use gluon_ipc::Convertable as _;
 use tracing::Instrument as _;
-pub const EXTERNAL_PROTOCOL: gluon::ExternalProtocol = gluon::ExternalProtocol {
+pub const EXTERNAL_PROTOCOL: gluon_ipc::ExternalProtocol = gluon_ipc::ExternalProtocol {
     protocol_name: "org.gluon.Types",
     types: &[
-        gluon::ExternalGluonType {
+        gluon_ipc::ExternalGluonType {
             name: "Vec3",
-            supported_derives: gluon::Derives::from_bits_truncate(171u32),
+            supported_derives: gluon_ipc::Derives::from_bits_truncate(171u32),
             proxy: Some("proxies::MyVec3"),
         },
     ],
@@ -24,26 +24,28 @@ pub mod proxied {
         pub y: f32,
         pub z: f32,
     }
-    impl gluon::Convertable for Vec3 {
+    impl gluon_ipc::Convertable for Vec3 {
         fn write(
             &self,
-            gluon_data: &mut gluon::DataBuilder,
-        ) -> Result<(), gluon::WriteError> {
+            gluon_data: &mut gluon_ipc::DataBuilder,
+        ) -> Result<(), gluon_ipc::WriteError> {
             self.x.write(gluon_data)?;
             self.y.write(gluon_data)?;
             self.z.write(gluon_data)?;
             Ok(())
         }
-        fn read(gluon_data: &mut gluon::DataReader) -> Result<Self, gluon::ReadError> {
-            let x = gluon::Convertable::read(gluon_data)?;
-            let y = gluon::Convertable::read(gluon_data)?;
-            let z = gluon::Convertable::read(gluon_data)?;
+        fn read(
+            gluon_data: &mut gluon_ipc::DataReader,
+        ) -> Result<Self, gluon_ipc::ReadError> {
+            let x = gluon_ipc::Convertable::read(gluon_data)?;
+            let y = gluon_ipc::Convertable::read(gluon_data)?;
+            let z = gluon_ipc::Convertable::read(gluon_data)?;
             Ok(Vec3 { x, y, z })
         }
         fn write_owned(
             self,
-            gluon_data: &mut gluon::DataBuilder,
-        ) -> Result<(), gluon::WriteError> {
+            gluon_data: &mut gluon_ipc::DataBuilder,
+        ) -> Result<(), gluon_ipc::WriteError> {
             self.x.write_owned(gluon_data)?;
             self.y.write_owned(gluon_data)?;
             self.z.write_owned(gluon_data)?;

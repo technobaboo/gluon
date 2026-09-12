@@ -6,10 +6,12 @@ members = ["codegen-test", "codegen-rust", "parser", "wire", "wire-derive"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+authors = ["Nova King <technobaboo@proton.me>"]
+license = "MIT"
 
 [workspace.dependencies]
-strong-ipc = { git = "https://github.com/technobaboo/strong-ipc" }
-gluon-codegen = { path = "./codegen-rust" }
-gluon-parser = { path = "./parser" }
-gluon = { path = "./wire" }
-gluon-derive = { path = "./wire-derive" }
+strong-ipc = "0.1.0"
+gluon-ipc-codegen = { path = "./codegen-rust" }
+gluon-ipc-parser = { path = "./parser" }
+gluon-ipc = { path = "./wire" }
+gluon-ipc-derive = { path = "./wire-derive" }

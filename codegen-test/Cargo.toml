@@ -6,14 +6,14 @@ edition.workspace = true
 [dependencies]
 # `local-handlers` so the tests can exercise `RefExt::local_from_ref` / `as_local`, the
 # path back from a ref that came in off the wire to the handler behind it
-gluon = { workspace = true, features = ["local-handlers"] }
+gluon-ipc = { workspace = true, features = ["local-handlers"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [build-dependencies]
-gluon-codegen.workspace = true
+gluon-ipc-codegen.workspace = true
 convert_case = "0.11.0"
 prettyplease = "0.2.37"
 proc-macro2 = "1.0.106"

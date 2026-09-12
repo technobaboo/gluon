@@ -88,8 +88,8 @@ name = "codegen-test"
 version = "0.1.0"
 dependencies = [
  "convert_case",
- "gluon",
- "gluon-codegen",
+ "gluon-ipc",
+ "gluon-ipc-codegen",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -217,11 +217,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "gluon"
+name = "gluon-ipc"
 version = "0.1.0"
 dependencies = [
  "bitflags",
- "gluon-derive",
+ "gluon-ipc-derive",
  "rustix",
  "strong-ipc",
  "thiserror",
@@ -229,12 +229,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "gluon-codegen"
+name = "gluon-ipc-codegen"
 version = "0.1.0"
 dependencies = [
  "convert_case",
- "gluon",
- "gluon-parser",
+ "gluon-ipc",
+ "gluon-ipc-parser",
  "prettyplease",
  "proc-macro2",
  "quote",
@@ -242,7 +242,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gluon-derive"
+name = "gluon-ipc-derive"
 version = "0.1.0"
 dependencies = [
  "quote",
@@ -250,7 +250,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gluon-parser"
+name = "gluon-ipc-parser"
 version = "0.1.0"
 dependencies = [
  "ansi_term",
@@ -578,7 +578,8 @@ dependencies = [
 [[package]]
 name = "strong-ipc"
 version = "0.1.0"
-source = "git+https://github.com/technobaboo/strong-ipc#4dddd5ede29f02352bc101645c55708862b1d9f4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df327b218ac884d02e54e500faaa1ecfd0b4678560874f70de801903c2f2f595"
 dependencies = [
  "dashmap",
  "rustix",

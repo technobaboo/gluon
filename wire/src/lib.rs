@@ -40,7 +40,7 @@
 //! the wire, where a `Ref` is still just a `Ref`.
 
 pub mod primitive_impls;
-pub use gluon_derive::Handler;
+pub use gluon_ipc_derive::Handler;
 pub use strong_ipc::{
     DeathNotifier, FdVec, Handler, MAX_MESSAGE_SIZE, Message, Node, NodeError, Ref, RefFsBinding,
     UCred,
@@ -791,7 +791,7 @@ impl ReturnReceiver {
     }
     pub async fn recv(&mut self) -> Result<DataReader, SendError> {
         tokio::select! {
-            // this unwrap should be fine since we 
+            // this unwrap should be fine since we
             v = self.1.recv() => { Ok(v.unwrap()) }
             _ = self.0.death_notification() => { Err(SendError::Closed) }
         }
@@ -825,9 +825,9 @@ impl ReturnHandler {
 mod tests {
     use std::marker::PhantomData;
 
-    // The derive emits `gluon::` paths; alias this crate so those paths
+    // The derive emits `gluon_ipc::` paths; alias this crate so those paths
     // resolve when the tests are compiled as part of `gluon-wire` itself.
-    extern crate self as gluon;
+    extern crate self as gluon_ipc;
 
     use super::*;
 

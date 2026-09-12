@@ -1,5 +1,5 @@
 use crate::protocol::test::TestHandler;
-use gluon::Context;
+use gluon_ipc::Context;
 use std::{
     hash::{DefaultHasher, Hash},
     process,
@@ -77,7 +77,7 @@ impl From<MyColor> for protocol::test::proxied::Color {
 }
 
 #[allow(unused)]
-#[derive(Debug, Default, gluon::Handler)]
+#[derive(Debug, Default, gluon_ipc::Handler)]
 struct TestHandlerImpl {
     /// pid the last `ping` came from, or 0 if the kernel reported no credentials —
     /// lets a test assert that `Context` really carries `SCM_CREDENTIALS` through
@@ -105,7 +105,11 @@ impl TestHandler for TestHandlerImpl {
         input
     }
 
-    async fn echo_untyped_ref(&self, _ctx: gluon::Context, input: gluon::Ref) -> gluon::Ref {
+    async fn echo_untyped_ref(
+        &self,
+        _ctx: gluon_ipc::Context,
+        input: gluon_ipc::Ref,
+    ) -> gluon_ipc::Ref {
         input
     }
 
@@ -122,7 +126,7 @@ impl TestHandler for TestHandlerImpl {
 /// handler type and get `None` rather than a compile error — the `HandledBy` bound admits
 /// both of these, and only the registry lookup can tell them apart.
 #[cfg(test)]
-#[derive(Debug, gluon::Handler)]
+#[derive(Debug, gluon_ipc::Handler)]
 struct SecondTestHandler;
 
 #[cfg(test)]
@@ -135,7 +139,11 @@ impl TestHandler for SecondTestHandler {
     async fn echo_ref(&self, _ctx: Context, input: protocol::test::Test) -> protocol::test::Test {
         input
     }
-    async fn echo_untyped_ref(&self, _ctx: gluon::Context, input: gluon::Ref) -> gluon::Ref {
+    async fn echo_untyped_ref(
+        &self,
+        _ctx: gluon_ipc::Context,
+        input: gluon_ipc::Ref,
+    ) -> gluon_ipc::Ref {
         input
     }
     async fn get_position(&self, _ctx: Context) -> MyVec3 {
@@ -150,15 +158,15 @@ impl TestHandler for SecondTestHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gluon::{Liveness, RefExt, ToRef};
+    use gluon_ipc::{Liveness, RefExt, ToRef};
     use protocol::test::{Test, TestLocal};
     use std::sync::Arc;
 
-    /// Stands up a handler and the [`gluon::LocalRef`] that reaches it.
+    /// Stands up a handler and the [`gluon_ipc::LocalRef`] that reaches it.
     ///
     /// The node comes back alongside it because nothing else holds it: drop it and its
     /// socket hangs up, so it has to outlive every call made through the proxy.
-    fn test_node() -> (gluon::Node<TestHandlerImpl>, TestLocal<TestHandlerImpl>) {
+    fn test_node() -> (gluon_ipc::Node<TestHandlerImpl>, TestLocal<TestHandlerImpl>) {
         Test::new_node(TestHandlerImpl::default()).unwrap()
     }
 

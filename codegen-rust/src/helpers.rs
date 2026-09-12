@@ -1,7 +1,7 @@
 use crate::{LocalProtocol, ModuleExternalProtocol, TypeProxy, gen_module};
 use convert_case::{Case, Casing};
-use gluon::Derives;
-use gluon_parser::parse_idl;
+use gluon_ipc::Derives;
+use gluon_ipc_parser::parse_idl;
 use std::{fs, io::ErrorKind, path::Path};
 
 /// Generates each module into a separate file within a folder, with a `mod.rs` re-exporting all modules
